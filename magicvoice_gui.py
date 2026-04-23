@@ -2433,7 +2433,16 @@ class App(tk.Tk):
         # File list
         tk.Label(inner,text="Danh sách file sẽ xử lý:",font=(FN,9),
                  bg=P["white"],fg=P["label"]).pack(anchor="w",padx=10,pady=(0,2))
-        lf=tk.Frame(inner,bg=P["white"]); lf.pack(fill="both",expand=True,padx=10)
+
+        # MOI: PanedWindow chia doi - tren la listbox file, duoi la preview noi dung
+        import tkinter.ttk as _ttk
+        paned = tk.PanedWindow(inner, orient="vertical", bg=P["white"],
+                                sashrelief="flat", sashwidth=6, bd=0)
+        paned.pack(fill="both", expand=True, padx=10)
+
+        # ── Frame tren: file list ──
+        lf=tk.Frame(paned,bg=P["white"])
+        paned.add(lf, minsize=100)
         vsb=tk.Scrollbar(lf); vsb.pack(side="right",fill="y")
         self.batch_lb=tk.Listbox(lf,font=(FN2,9),bg=P["sidebar"],
                                   fg=P["text"],selectbackground=P["sel"],
@@ -2442,6 +2451,33 @@ class App(tk.Tk):
                                   yscrollcommand=vsb.set)
         self.batch_lb.pack(fill="both",expand=True)
         vsb.config(command=self.batch_lb.yview)
+
+        # ── Frame duoi: preview noi dung ──
+        pf = tk.Frame(paned, bg=P["white"])
+        paned.add(pf, minsize=80)
+
+        _phead = tk.Frame(pf, bg=P["white"]); _phead.pack(fill="x", pady=(4,2))
+        tk.Label(_phead, text="📖 Nội dung file (preview):",
+                 font=(FN,9), bg=P["white"], fg=P["label"]
+                 ).pack(side="left")
+        self.batch_preview_info = tk.Label(_phead, text="",
+                                            font=(FN,8,"italic"),
+                                            bg=P["white"], fg=P["dim"])
+        self.batch_preview_info.pack(side="left", padx=(10,0))
+
+        pv_wrap = tk.Frame(pf, bg=P["white"]); pv_wrap.pack(fill="both", expand=True)
+        pv_vsb = tk.Scrollbar(pv_wrap); pv_vsb.pack(side="right", fill="y")
+        self.batch_preview = tk.Text(pv_wrap, font=(FN2,9),
+                                      bg=P["sidebar"], fg=P["text"],
+                                      relief="flat", highlightthickness=1,
+                                      highlightbackground=P["border"],
+                                      wrap="word", state="disabled",
+                                      yscrollcommand=pv_vsb.set, height=6)
+        self.batch_preview.pack(side="left", fill="both", expand=True)
+        pv_vsb.config(command=self.batch_preview.yview)
+
+        # Bind click event de preview
+        self.batch_lb.bind("<<ListboxSelect>>", self._batch_on_select)
 
         foot=tk.Frame(inner,bg=P["white"],pady=4); foot.pack(fill="x",padx=10)
         self.batch_cnt=tk.Label(foot,text="0 file",font=(FN,9),
@@ -5515,10 +5551,74 @@ class App(tk.Tk):
         if not self._txt_files:
             messagebox.showwarning("Trống","Chưa có file nào!"); return
         if self.is_running:
+            messagebox.showinfo("Đang chạy","Đang xử lý tác vụ khác, vui lòng đợi!")
             return
+        # MOI: Check model load truoc khi start thread
+        if not self.model_loaded:
+            messagebox.showwarning("Chưa tải model","Nhấn '⬇ Tải Model' trước khi bắt đầu batch!")
+            return
+        # MOI: Check voice da chon chua
+        try:
+            _ = self._vkw()
+        except Exception as _kw_err:
+            messagebox.showerror("Lỗi Voice",
+                f"Không thể bắt đầu batch vì cấu hình voice có vấn đề:\n\n{_kw_err}\n\n"
+                "Hãy kiểm tra lại voice đang chọn (clone thì cần ref_audio).")
+            return
+        # MOI: set is_running NGAY de tranh race khi double-click
+        self.is_running = True
         self._running_tab = "batch"
-        self.after(0, self._refresh_tab_indicators)   # MOI: hien cham tron tab dang chay
+        self.after(0, self._refresh_tab_indicators)
+        # MOI: thong bao ro rang de user biet da start
+        self._log(f"▶ Bắt đầu batch: {len(self._txt_files)} file", "info")
+        self._st(f"▶ Đang chuẩn bị batch ({len(self._txt_files)} file)...", P["blue"])
         threading.Thread(target=self._run_batch,daemon=True).start()
+
+    def _batch_on_select(self, event=None):
+        """Khi user click 1 file trong listbox -> hien noi dung preview."""
+        try:
+            sel = self.batch_lb.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            if idx >= len(self._txt_files):
+                return
+            fp = self._txt_files[idx]
+            ext = Path(fp).suffix.lower()
+            try:
+                content = Path(fp).read_text("utf-8", errors="ignore")
+            except Exception as e:
+                content = f"[Không đọc được file: {e}]"
+
+            # Thong tin ngan o header
+            n_lines = content.count("\n") + 1
+            n_chars = len(content)
+            info = f"{Path(fp).name}  •  {n_chars:,} ký tự  •  {n_lines:,} dòng"
+            if ext == ".srt":
+                try:
+                    n_entries = len(parse_srt(content))
+                    info += f"  •  {n_entries} entries"
+                except Exception:
+                    pass
+            self.batch_preview_info.config(text=info)
+
+            # Cap nhat preview box
+            self.batch_preview.config(state="normal")
+            self.batch_preview.delete("1.0", "end")
+            # Gioi han 50KB cho preview kho phai load file khong lo
+            if len(content) > 50000:
+                self.batch_preview.insert("1.0",
+                    content[:50000] + "\n\n[... đã cắt, file quá lớn để preview đầy đủ ...]")
+            else:
+                self.batch_preview.insert("1.0", content)
+            self.batch_preview.config(state="disabled")
+            self.batch_preview.see("1.0")
+        except Exception as e:
+            # Khong de exception vo tinh pha app
+            try:
+                self._log(f"⚠ Preview lỗi: {e}", "warn")
+            except Exception:
+                pass
 
     # ── Helpers cho batch naming ──────────────────────────────────────
     # (Giu lai de tuong thich - delegate sang helper global)
@@ -5608,6 +5708,15 @@ class App(tk.Tk):
                 ext    = Path(fp).suffix.lower()
                 self._st(f"[{i+1}/{total}] {stem}{ext}")
                 self._log(f"[{i+1}/{total}] {Path(fp).name}","info")
+                # MOI: highlight file dang xu ly trong listbox + auto-scroll
+                try:
+                    self.after(0, lambda idx=i: (
+                        self.batch_lb.selection_clear(0, "end"),
+                        self.batch_lb.selection_set(idx),
+                        self.batch_lb.see(idx),
+                    ))
+                except Exception:
+                    pass
 
                 # Tinh ten output (dung helper global)
                 default_name = self._compute_output_name(stem, i)
