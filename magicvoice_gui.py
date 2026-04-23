@@ -1666,8 +1666,8 @@ class VoiceBrowserDialog(tk.Toplevel):
 #     "version_url":  "https://raw.githubusercontent.com/USER/REPO/main/version.txt",
 #     "download_url": "https://raw.githubusercontent.com/USER/REPO/main/magicvoice_gui.py"
 #   }
-_UPDATE_DEFAULT_URL  = "https://magicvoice-update.onrender.com/download/magicvoice_gui.py"
-_UPDATE_DEFAULT_VER  = "https://magicvoice-update.onrender.com/version"
+_UPDATE_DEFAULT_URL  = "https://magicvoice-update-1.onrender.com/download/magicvoice_gui.py"
+_UPDATE_DEFAULT_VER  = "https://magicvoice-update-1.onrender.com/version"
 
 def _load_update_config():
     """Doc update_config.json neu co. Tra ve (download_url, version_url, extra_files).
