@@ -5695,18 +5695,21 @@ class App(tk.Tk):
         return self._ask_output_filename(default_name, Path(src_path).name)
 
     def _batch_gen_srt_file(self, srt_path: str, kw: dict):
-        """Sinh audio tu 1 file .srt: parse -> gen tung entry -> concat -> return tensor.
-        Tra ve None neu file rong / bi huy. Khong post-process (se lam trong _save)."""
+        """Sinh audio tu 1 file .srt: parse -> gen tung entry -> concat.
+        Tra ve (final_tensor, entry_tensors) hoac (None, None) neu rong/huy.
+          final_tensor: tensor da noi + silence giua cac entry
+          entry_tensors: list[tensor] tung entry rieng le -> de luu _parts/
+        Khong post-process (se lam trong _save)."""
         import torch
         try:
             raw = Path(srt_path).read_text("utf-8").strip()
         except Exception:
             raw = Path(srt_path).read_text("utf-8", errors="ignore").strip()
-        if not raw: return None
+        if not raw: return None, None
         entries = parse_srt(raw)
         if not entries:
             # Fallback: coi nhu van ban thuong, tach theo dau cau
-            return None
+            return None, None
 
         SR    = 24000
         gap   = int(self.gap_var.get())
@@ -5714,11 +5717,12 @@ class App(tk.Tk):
         speed = self._get_speed()
         silence = torch.zeros(1, int(gap * SR / 1000))
 
-        tensors = []
+        tensors = []        # de ghep final (co silence giua)
+        entry_tensors = []  # tung entry rieng -> luu _parts/
         ok = skip = 0
         total_e = len(entries)
         for j, e in enumerate(entries):
-            if self.cancel_ev.is_set(): return None
+            if self.cancel_ev.is_set(): return None, None
             txt = e.text.strip()
             # Lam sach nhac cu / tag HTML
             import re as _re
@@ -5733,7 +5737,9 @@ class App(tk.Tk):
                 t = _to_tensor(a)
                 if t is None or t.abs().max() < 0.0001:
                     skip += 1; continue
+                # Luu vao ca 2 list
                 tensors.append(t)
+                entry_tensors.append(t)   # MOI: luu rieng cho _parts
                 if j < total_e - 1:
                     tensors.append(silence)
                 ok += 1
@@ -5741,9 +5747,9 @@ class App(tk.Tk):
                 self._log(f"    ⚠ entry {j+1}: {_ge}", "warn")
                 skip += 1
         if not tensors:
-            return None
+            return None, None
         self._log(f"    🎞 {ok} entry OK, {skip} bỏ qua → ghép", "info")
-        return torch.cat(tensors, dim=1)
+        return torch.cat(tensors, dim=1), entry_tensors
 
     def _run_batch(self):
         # MOI: kiem tra license truoc
@@ -5799,8 +5805,9 @@ class App(tk.Tk):
 
                 try:
                     tensor = None
+                    entry_tensors = None   # MOI: cho SRT - list tensor tung entry
                     if ext == ".srt":
-                        tensor = self._batch_gen_srt_file(fp, kw)
+                        tensor, entry_tensors = self._batch_gen_srt_file(fp, kw)
                         if tensor is None:
                             self._log("  ⚠ SRT rỗng hoặc không parse được", "warn")
                             fail += 1; continue
@@ -5821,6 +5828,26 @@ class App(tk.Tk):
                     out=self._out(name=default_name, ext=fmt)
                     self._save(tensor, out)
                     self._log(f"  ✅ → {Path(out).name}","ok"); ok+=1
+
+                    # MOI: luu _parts/ cho file SRT (giong tab SRT don le)
+                    if ext == ".srt" and entry_tensors:
+                        try:
+                            parts_dir = Path(out).parent / (Path(out).stem + "_parts")
+                            parts_dir.mkdir(parents=True, exist_ok=True)
+                            saved_parts = 0
+                            for _pi, _et in enumerate(entry_tensors):
+                                _part_mp3 = str(parts_dir / f"{_pi+1:03d}.mp3")
+                                try:
+                                    _out_t = _et.unsqueeze(0) if _et.dim()==1 else _et
+                                    to_mp3(_out_t, _part_mp3)
+                                    saved_parts += 1
+                                except Exception as _pe:
+                                    self._log(f"    ⚠ Part {_pi+1}: {_pe}", "warn")
+                            self._log(
+                                f"  📁 {saved_parts}/{len(entry_tensors)} file lẻ → {parts_dir.name}/",
+                                "ok")
+                        except Exception as _dir_err:
+                            self._log(f"  ⚠ Không tạo được thư mục parts: {_dir_err}", "warn")
                 except Exception as e:
                     self._log(f"  ❌ {Path(fp).name}: {e}","err"); fail+=1
                 self.after(0,lambda v=(i+1)/total*100:self.pb.configure(value=v))
