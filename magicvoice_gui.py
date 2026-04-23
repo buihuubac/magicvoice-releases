@@ -1365,22 +1365,19 @@ def _to_tensor(a):
     return item
 
 
-_GS_LICENSE_URL = "https://script.google.com/macros/s/AKfycbxTM0UkwP6VJmbFJE9c6pyP_-PBinsVPe-pzwa5lgtsaDUC5CqkJsjoxJYc99b-bBcu/exec"
-_GS_SECRET      = "mv_lic_2025"
-
 def _check_license_gs(username):
-    """Check license qua Google Apps Script - khoa theo machine ID."""
+    """Check license — delegate sang license_guard.verify_license().
+    FAIL-CLOSED: neu module loi/thieu → TU CHOI (khong con fail-open nhu ban cu).
+    """
     try:
-        import requests as _rq, json as _js
-        from auth_manager import get_machine_id
-        mid = get_machine_id()
-        r = _rq.post(_GS_LICENSE_URL, 
-            json={"username": username, "machine_id": mid, "secret": _GS_SECRET},
-            timeout=30)
-        d = r.json()
-        return d.get("ok", False), d.get("msg", "Loi ket noi!")
-    except Exception as e:
-        return True, ""  # Cho qua neu mat mang (da co cache offline)
+        from license_guard import verify_license
+        return verify_license(username)
+    except ImportError as _ie:
+        # Module bi xoa/thieu → tu choi de tranh bypass
+        return False, ("Module license_guard bi thieu. "
+                       "Vui long cai dat lai app. Chi tiet: " + str(_ie))
+    except Exception as _e:
+        return False, "Loi kiem tra license: " + str(_e)
 
 def preprocess_text(txt):
     """
@@ -1673,21 +1670,42 @@ _UPDATE_DEFAULT_URL  = "https://magicvoice-update.onrender.com/download/magicvoi
 _UPDATE_DEFAULT_VER  = "https://magicvoice-update.onrender.com/version"
 
 def _load_update_config():
-    """Doc update_config.json neu co. Tra ve (download_url, version_url)."""
+    """Doc update_config.json neu co. Tra ve (download_url, version_url, extra_files).
+    extra_files: dict {filename: url} cho cac file bo sung can update kem theo.
+    Format mới:
+      {
+        "version_url":  "...",
+        "download_url": "...",  // file chinh (magicvoice_gui.py)
+        "extra_files": {        // cac file kem theo (optional)
+          "license_guard.py": "https://..."
+        }
+      }
+    """
+    extra = {}
     try:
         _cfg_file = Path(__file__).parent / "update_config.json"
         if _cfg_file.exists():
             _d = json.loads(_cfg_file.read_text(encoding="utf-8"))
             _du = (_d.get("download_url") or "").strip()
             _vu = (_d.get("version_url")  or "").strip()
+            _ef = _d.get("extra_files") or {}
+            if isinstance(_ef, dict):
+                for k, v in _ef.items():
+                    if isinstance(k, str) and isinstance(v, str) and v.strip():
+                        # Chi cho phep ten file an toan (khong path traversal)
+                        safe_name = Path(k).name
+                        if safe_name == k and not k.startswith("."):
+                            extra[safe_name] = v.strip()
             if _du and _vu:
                 print(f"[Update] Dung URL tu update_config.json: {_vu}")
-                return _du, _vu
+                if extra:
+                    print(f"[Update] Extra files: {list(extra.keys())}")
+                return _du, _vu, extra
     except Exception as _e:
         print(f"[Update] Loi doc update_config.json: {_e}")
-    return _UPDATE_DEFAULT_URL, _UPDATE_DEFAULT_VER
+    return _UPDATE_DEFAULT_URL, _UPDATE_DEFAULT_VER, {}
 
-UPDATE_URL, VERSION_URL = _load_update_config()
+UPDATE_URL, VERSION_URL, UPDATE_EXTRA_FILES = _load_update_config()
 
 # Doc version tu file local version.txt (duoc cap nhat cung voi magicvoice_gui.py)
 def _read_local_version():
@@ -1879,6 +1897,28 @@ def check_for_update(root, silent=False):
             # Backup & download
             shutil.copy(script, backup)
             urllib.request.urlretrieve(UPDATE_URL, str(script))
+
+            # MOI: tai extra files (license_guard.py, ...)
+            # Neu tai file nao loi -> rollback va bao loi
+            extra_backups = {}
+            try:
+                for _fname, _furl in UPDATE_EXTRA_FILES.items():
+                    _dest = script.parent / _fname
+                    if _dest.exists():
+                        _bak = _dest.with_suffix(_dest.suffix + ".bak")
+                        shutil.copy(_dest, _bak)
+                        extra_backups[str(_dest)] = str(_bak)
+                    urllib.request.urlretrieve(_furl, str(_dest))
+            except Exception as _ex_err:
+                # Rollback: khoi phuc script chinh
+                try: shutil.copy(backup, script)
+                except Exception: pass
+                # Rollback: khoi phuc extra files
+                for _dp, _bp in extra_backups.items():
+                    try: shutil.copy(_bp, _dp)
+                    except Exception: pass
+                raise RuntimeError(
+                    f"Khong tai duoc file bo sung: {_ex_err}") from _ex_err
 
             # Luu version.txt local de lan sau khong hoi lai
             local_ver_file = script.parent / "version.txt"
@@ -4538,6 +4578,26 @@ class App(tk.Tk):
         self._timer_running = False
         self._timer_label.config(text="")
 
+    # ── MOI: Helper license check dung chung cho moi run method ──
+    def _verify_license_or_abort(self) -> bool:
+        """Check license. Tra True neu OK, False neu fail (da tu dong popup).
+        Dung session cache nen goi nhieu lan khong chậm."""
+        _u = getattr(self, "_username", "")
+        if not _u:
+            return True  # Khong co username → khong check (luc init)
+        try:
+            ok, msg = _check_license_gs(_u)
+        except Exception as e:
+            ok, msg = False, str(e)
+        if not ok:
+            self.after(0, lambda m=msg: messagebox.showerror(
+                "License không hợp lệ",
+                f"{m}\n\nVui lòng kết nối internet và khởi động lại app.\n"
+                "Hỗ trợ: Zalo 0985 483 623",
+                parent=self))
+            self._log(f"❌ License từ chối: {msg}", "err")
+        return ok
+
     def _run_text(self, txt):
         """
         Tách nhỏ → đọc nhanh từng đoạn → nối lại:
@@ -4546,13 +4606,8 @@ class App(tk.Tk):
         3. Nối tensor trong RAM → lưu 1 lần
         """
         # Kiem tra license truoc khi tao voice
-        _u = getattr(self, "_username", "")
-        if _u:
-            _lic_ok, _lic_msg = _check_license_gs(_u)
-            if not _lic_ok:
-                self.after(0, lambda: messagebox.showerror(
-                    "License Error", _lic_msg, parent=self))
-                return
+        if not self._verify_license_or_abort():
+            return
         self.cancel_ev.clear()   # Reset trạng thái hủy
         self._busy(True)
         self._start_timer()
@@ -4726,6 +4781,9 @@ class App(tk.Tk):
         Đọc văn bản bằng Edge TTS (Microsoft) — nhanh, online.
         Tách theo đoạn → gọi Edge TTS song song → nối lại.
         """
+        # MOI: kiem tra license truoc
+        if not self._verify_license_or_abort():
+            return
         self._busy(True)
         self._start_timer()
         try:
@@ -4974,6 +5032,9 @@ class App(tk.Tk):
 
     def _run_srt_edge(self, entries, vp):
         """Tao SRT bang Edge TTS - danh cho may cau hinh yeu, khong can GPU."""
+        # MOI: kiem tra license truoc
+        if not self._verify_license_or_abort():
+            return
         import asyncio, tempfile, torch, torchaudio as _ta
 
         # Lay edge voice id
@@ -5070,6 +5131,9 @@ class App(tk.Tk):
         2. Dùng ffmpeg filter_complex + adelay đặt đúng timestamp
         → Không bị lỗi resample, không bị mất âm
         """
+        # MOI: kiem tra license truoc
+        if not self._verify_license_or_abort():
+            return
         import torchaudio, tempfile
         self._busy(True); self.cancel_ev.clear()
         entries   = self.srt_entries
@@ -5682,6 +5746,12 @@ class App(tk.Tk):
         return torch.cat(tensors, dim=1)
 
     def _run_batch(self):
+        # MOI: kiem tra license truoc
+        if not self._verify_license_or_abort():
+            self._running_tab = None
+            self.is_running = False
+            self.after(0, self._refresh_tab_indicators)
+            return
         self._busy(True); self.cancel_ev.clear()
         total=len(self._txt_files); ok=fail=skipped=0
         ask_name  = False
@@ -6589,6 +6659,42 @@ if __name__ == "__main__":
         _last_username = _d.get("u", "")
     except Exception:
         _last_username = ""
+
+    # ── MOI: Kiem tra license NGAY sau login (fail-closed) ─────────
+    # Neu license khong hop le -> khong cho mo app
+    if _last_username:
+        try:
+            from license_guard import verify_license as _vfl
+            _lok, _lmsg = _vfl(_last_username)
+            if not _lok:
+                import tkinter as _lk
+                _lr = _lk.Tk(); _lr.withdraw()
+                _lk.messagebox.showerror(
+                    "License khong hop le",
+                    f"Khong the khoi dong MagicVoice:\n\n{_lmsg}\n\n"
+                    "Vui long kiem tra ket noi internet va dang nhap lai.\n"
+                    "Neu van khong duoc, lien he ho tro qua Zalo: 0985 483 623")
+                _lr.destroy()
+                _sys.exit(1)
+        except ImportError:
+            import tkinter as _lk
+            _lr = _lk.Tk(); _lr.withdraw()
+            _lk.messagebox.showerror(
+                "Loi he thong",
+                "Thieu module license_guard.py.\n\n"
+                "Vui long cai dat lai app bang CaiDat_MagicVoice.bat\n"
+                "hoac lien he Zalo: 0985 483 623")
+            _lr.destroy()
+            _sys.exit(1)
+        except Exception as _le:
+            # Loi bat ngo khac — van tu choi, khong fail-open
+            import tkinter as _lk
+            _lr = _lk.Tk(); _lr.withdraw()
+            _lk.messagebox.showerror(
+                "Loi kiem tra license",
+                f"Loi: {_le}\n\nLien he ho tro: 0985 483 623")
+            _lr.destroy()
+            _sys.exit(1)
 
     import traceback as _tb
     _log_file = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "error_log.txt")
