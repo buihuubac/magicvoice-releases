@@ -4641,27 +4641,39 @@ class App(tk.Tk):
             if vp.ref_text:
                 kw["ref_text"] = vp.ref_text
             else:
-                # MOI: Auto-transcribe TRUOC khi vao omnivoice
-                # de tranh loi "Could not load model whisper-large-v3-turbo"
-                # do transformers/omnivoice version mismatch
+                # Auto-transcribe TRUOC khi vao omnivoice
                 _auto_text = self._auto_transcribe_ref(kw["ref_audio"], vp)
                 if _auto_text:
                     kw["ref_text"] = _auto_text
                     self._log(f"  📝 Auto-transcribe ref: \"{_auto_text[:60]}...\"", "info")
                 else:
-                    # FIX v3.18: Khong dung placeholder tieng Viet (gay loi clone
-                    # voi giong tieng Anh - vi audio + ref_text khac ngon ngu).
-                    # Bao loi ro rang yeu cau user nhap ref_text thu cong.
-                    raise ValueError(
-                        f"Khong the auto-transcribe audio mau cua voice '{vp.name}'.\n\n"
-                        f"De clone giong CHINH XAC, ban can nhap thu cong noi dung audio mau:\n\n"
-                        f"  1. Vao tab Clone Voice\n"
-                        f"  2. Click chuot phai vao voice '{vp.name}' -> Sua\n"
-                        f"  3. Trong o 'Noi dung audio mau' (ref_text), go CHINH XAC\n"
-                        f"     cau ma file audio dang doc.\n\n"
-                        f"Vi du: neu file MP3 noi 'Xin chao cac ban, hom nay...' \n"
-                        f"thi go chinh xac cau do vao o ref_text.\n\n"
-                        f"Neu khong nhap, clone se khong dung giong va ngat nghi loan.")
+                    # FIX v3.9: KHONG raise loi nua. Thay vao do dung placeholder
+                    # PHU HOP NGON NGU (detect qua ten voice/instruct/text dau vao).
+                    # Voice cu khong co ref_text van chay duoc, khach khong bi block.
+                    # Detect ngon ngu:
+                    _hint = (vp.name or "") + " " + (vp.instruct or "")
+                    _hint_lower = _hint.lower()
+                    # Co tu tieng Anh hoac ten kieu English -> placeholder English
+                    is_english = any(w in _hint_lower for w in [
+                        "english","anh","us","uk","american","british",
+                        "iran","john","jane","mike","tom","jenny","emma",
+                        "narrator","voice","male","female","young","old"
+                    ])
+                    # Mac dinh: tieng Viet (vi MagicVoice chu yeu khach Viet)
+                    if is_english:
+                        placeholder = ("This is a sample voice recording for "
+                                       "reference, used to clone the speaker's tone.")
+                    else:
+                        placeholder = ("Đây là đoạn ghi âm giọng nói mẫu, "
+                                       "dùng làm tham chiếu cho việc nhân bản giọng.")
+                    kw["ref_text"] = placeholder
+                    self._log(
+                        f"  ⚠ Khong transcribe duoc audio mau. Dung placeholder "
+                        f"({'EN' if is_english else 'VI'}) - clone se khong toi uu.\n"
+                        f"     De clone CHINH XAC nhat: vao Clone Voice -> Sua "
+                        f"voice '{vp.name}' -> nhap noi dung audio mau (ref_text) "
+                        f"chinh xac cau ma audio dang doc.",
+                        "warn")
         elif vp.mode == "design":
             if not vp.instruct:
                 raise ValueError("Voice Design thiếu mô tả!")
@@ -4691,8 +4703,25 @@ class App(tk.Tk):
             return cached
 
         # 2. Thu faster-whisper (uu tien - nhe va nhanh)
+        # Neu chua cai -> tu dong cai (chi 1 lan)
         try:
             from faster_whisper import WhisperModel
+        except ImportError:
+            self._log("  ⏳ Lan dau dung clone voice - dang cai faster-whisper...", "info")
+            try:
+                import subprocess as _sp_w, sys as _sys_w
+                _flags_w = 0x08000000 if os.name == "nt" else 0
+                _sp_w.run([_sys_w.executable, "-m", "pip", "install",
+                          "faster-whisper", "--quiet", "--no-cache-dir"],
+                         creationflags=_flags_w, timeout=180)
+                from faster_whisper import WhisperModel  # thu import lai
+                self._log("  ✓ Cai faster-whisper thanh cong", "ok")
+            except Exception as _e:
+                self._log(f"  ⚠ Khong cai duoc faster-whisper: {str(_e)[:80]}", "warn")
+                WhisperModel = None
+        try:
+            if WhisperModel is None:
+                raise ImportError("WhisperModel not available")
             self._log("  ⏳ Đang nhận diện ref_audio (faster-whisper medium)...", "info")
             # FIX v3.18: doi tu "small" (244MB) -> "medium" (~1.5GB)
             # de transcribe CHINH XAC hon, tranh sai chu lam clone bi nghen.
