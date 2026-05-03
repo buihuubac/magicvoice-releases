@@ -2756,34 +2756,69 @@ class App(tk.Tk):
         return [p for p in parts if p]
 
     def _do_split(self, text, min_w, max_w, ovfl, by_clause):
+        """
+        Chia text thanh cac dong SRT theo min/max tu.
+        FIX: Gop CROSS-PARAGRAPH de moi dong deu trong khoang [min_w, max_w].
+        Truoc day: paragraph ngan -> chunk ngan, khong ton trong min_w.
+        Gio: dồn toan bo unit thanh 1 list, chi chia khi dat min_w va gan max_w.
+        Chi dong CUOI CUNG cua toan bo text moi co the < min_w (vi het noi dung).
+        """
         import re as _re
         paras = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
-        chunks = []
+
+        # B1: gom TOAN BO units cua TOAN BO paragraph thanh 1 list
+        all_units = []
         for para in paras:
             units = self._split_clauses(para) if by_clause else para.split()
-            cur, cw = [], 0
-            for u in units:
-                uw = self._count_words(u)
-                if cw == 0:
-                    cur.append(u); cw += uw
-                elif cw < min_w:
-                    cur.append(u); cw += uw
-                elif cw + uw <= max_w + ovfl:
+            all_units.extend(units)
+
+        # B2: chia all_units thanh chunks theo min/max
+        # Quy tac:
+        #   - Neu cur < min_w: BAT BUOC them unit ke tiep (du co the vuot max)
+        #   - Neu cur >= min_w va cur + u <= max_w: them unit, neu cur >= max_w thi flush
+        #   - Neu cur >= min_w va cur + u > max_w: kiem tra
+        #       + Neu cur + u <= max_w + ovfl: them roi flush
+        #       + Nguoc lai: flush cur, bat dau chunk moi voi u
+        chunks = []
+        cur, cw = [], 0
+        for u in all_units:
+            uw = self._count_words(u)
+            if cw == 0:
+                cur.append(u); cw += uw
+            elif cw < min_w:
+                # CHUA du min -> bat buoc them, ke ca khi vuot max
+                cur.append(u); cw += uw
+                # Neu sau khi them >= max thi flush
+                if cw >= max_w:
+                    chunks.append(" ".join(cur).strip()); cur, cw = [], 0
+            else:
+                # cur da du min_w, can quyet dinh co them u nua khong
+                if cw + uw <= max_w:
                     cur.append(u); cw += uw
                     if cw >= max_w:
                         chunks.append(" ".join(cur).strip()); cur, cw = [], 0
+                elif cw + uw <= max_w + ovfl:
+                    # Cho phep tran trong khoang ovfl roi flush
+                    cur.append(u); cw += uw
+                    chunks.append(" ".join(cur).strip()); cur, cw = [], 0
                 else:
-                    chunks.append(" ".join(cur).strip()); cur, cw = [u], uw
-            if cur:
-                joined = " ".join(cur).strip()
-                if cw < min_w and chunks:
-                    last = chunks[-1]
-                    if self._count_words(last) + cw <= max_w + ovfl:
-                        chunks[-1] = last + " " + joined
-                    else:
-                        chunks.append(joined)
+                    # Khong them duoc nua -> flush cur, bat dau chunk moi voi u
+                    chunks.append(" ".join(cur).strip())
+                    cur, cw = [u], uw
+
+        # B3: xu ly chunk cuoi cung
+        if cur:
+            joined = " ".join(cur).strip()
+            if cw < min_w and chunks:
+                # Chunk cuoi qua ngan -> co gop voi chunk truoc duoc khong
+                last = chunks[-1]
+                if self._count_words(last) + cw <= max_w + ovfl:
+                    chunks[-1] = last + " " + joined
                 else:
                     chunks.append(joined)
+            else:
+                chunks.append(joined)
+
         return [c for c in chunks if c.strip()]
 
     @staticmethod
@@ -4703,25 +4738,8 @@ class App(tk.Tk):
             return cached
 
         # 2. Thu faster-whisper (uu tien - nhe va nhanh)
-        # Neu chua cai -> tu dong cai (chi 1 lan)
         try:
             from faster_whisper import WhisperModel
-        except ImportError:
-            self._log("  ⏳ Lan dau dung clone voice - dang cai faster-whisper...", "info")
-            try:
-                import subprocess as _sp_w, sys as _sys_w
-                _flags_w = 0x08000000 if os.name == "nt" else 0
-                _sp_w.run([_sys_w.executable, "-m", "pip", "install",
-                          "faster-whisper", "--quiet", "--no-cache-dir"],
-                         creationflags=_flags_w, timeout=180)
-                from faster_whisper import WhisperModel  # thu import lai
-                self._log("  ✓ Cai faster-whisper thanh cong", "ok")
-            except Exception as _e:
-                self._log(f"  ⚠ Khong cai duoc faster-whisper: {str(_e)[:80]}", "warn")
-                WhisperModel = None
-        try:
-            if WhisperModel is None:
-                raise ImportError("WhisperModel not available")
             self._log("  ⏳ Đang nhận diện ref_audio (faster-whisper medium)...", "info")
             # FIX v3.18: doi tu "small" (244MB) -> "medium" (~1.5GB)
             # de transcribe CHINH XAC hon, tranh sai chu lam clone bi nghen.
