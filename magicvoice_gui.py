@@ -4818,30 +4818,27 @@ class App(tk.Tk):
                     f"  3. Hoac ghi am moi roi luu voice")
             # Trim ref_audio 10-30s toi uu cho clone
             kw["ref_audio"] = self._prepare_ref_audio(ref)
-            if vp.ref_text:
-                kw["ref_text"] = vp.ref_text
-            else:
-                # Auto-transcribe TRUOC khi vao omnivoice (cho UI feedback)
-                _auto_text = self._auto_transcribe_ref(kw["ref_audio"], vp)
-                if _auto_text:
-                    kw["ref_text"] = _auto_text
-                    self._log(f"  📝 Auto-transcribe ref: \"{_auto_text[:60]}...\"", "info")
-                else:
-                    # FIX (theo doc OmniVoice github.com/k2-fsa/OmniVoice):
-                    # Neu khong transcribe duoc, KHONG truyen ref_text (omit).
-                    # OmniVoice se TU DONG dung Whisper noi bo de transcribe.
-                    # Doc goc: "If you don't want to input ref_text manually,
-                    # you can directly omit the ref_text. The model will use
-                    # Whisper ASR to auto-transcribe it."
-                    # Truoc day mình truyen placeholder text -> model "clone"
-                    # theo placeholder -> giong hong, doc lung tung.
-                    self._log(
-                        f"  ⚠ Local transcribe fail - de OmniVoice tu Whisper noi bo.\n"
-                        f"     De clone CHINH XAC nhat: vao Clone Voice -> Sua "
-                        f"voice '{vp.name}' -> nhap noi dung audio mau (ref_text) "
-                        f"chinh xac cau ma audio dang doc.",
-                        "warn")
-                    # Khong gan kw["ref_text"] -> omit -> omnivoice tu xu ly
+            # === SUA: KHONG auto-transcribe, KHONG truyen ref_text mac dinh ===
+            # Ly do: Whisper local (faster-whisper/openai-whisper) transcribe sai
+            # tieng Viet -> text sai bi truyen vao model -> model lech alignment
+            # giua am thanh va text -> doc lung tung, lap tu, nuot tu.
+            #
+            # OmniVoice CHINH NO da co Whisper noi bo va xu ly tot hon.
+            # Doc OmniVoice (github.com/k2-fsa/OmniVoice):
+            #   "If you don't want to input ref_text manually, you can directly
+            #    omit the ref_text. The model will use Whisper ASR to auto-
+            #    transcribe it."
+            #
+            # -> OMIT ref_text mac dinh = tra ve hanh vi cu (chi can ref_audio)
+            #    da chay on dinh truoc khi them tinh nang auto-transcribe.
+            #
+            # Neu user MUON dung ref_text thu cong (nhap chinh xac cau audio
+            # dang doc) thi van ho tro: bo comment 2 dong duoi va dam bao
+            # vp.ref_text khong phai rac tu auto-transcribe cu.
+            #
+            # if vp.ref_text and vp.ref_text.strip():
+            #     kw["ref_text"] = vp.ref_text
+            self._log("  ✓ Clone mode: chi dung ref_audio, OmniVoice tu xu ly text.", "info")
         elif vp.mode == "design":
             if not vp.instruct:
                 raise ValueError("Voice Design thiếu mô tả!")
