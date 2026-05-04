@@ -536,32 +536,16 @@ class Backend:
         if ref_text:  kw['ref_text']  = ref_text
         if instruct:  kw['instruct']  = _normalize_instruct(instruct)
 
-        # FIX: chong F5-TTS hallucinate (chèn từ tu ref_audio/ref_text vao gen).
-        # Day la van de da biet cua F5: github.com/SWivid/F5-TTS/issues/85
-        # Cac param sau giup model bam sat text hon, it chen tu lac:
-        #   cfg_strength=2.5 (default 2.0) -> tang guidance, model bam text chac hon
-        #   sway_sampling_coef=-1.0 -> theo F5 paper, cai thien robustness
-        # Truyen them neu omnivoice/F5 ho tro - khong fail neu khong support
-        for opt_key, opt_val in (
-            ("cfg_strength",       2.5),
-            ("sway_sampling_coef", -1.0),
-        ):
-            kw[opt_key] = opt_val
+        # GIU NGUYEN params goc cua model. Khong tu y bo sung cfg_strength /
+        # sway_sampling_coef vi:
+        #   - cfg_strength > 2.0 lam giong clone bi meo, ngat cut, lap tu
+        #   - sway_sampling_coef = -1.0 co the gay artifacts khi model khong
+        #     hoan toan tuong thich F5 paper sampling
+        # Cac giong dong cua model OmniVoice da duoc cau hinh toi uu boi tac gia.
 
         try:
             with _t.inference_mode():
-                try:
-                    result = cls._model.generate(**kw)
-                except TypeError as _te:
-                    # Backend cu khong nhan cfg_strength / sway_sampling_coef -> fallback
-                    err_str = str(_te).lower()
-                    if "unexpected keyword" in err_str or "got an unexpected" in err_str:
-                        # Bo cac param mo rong, gen lai voi param co ban
-                        kw.pop("cfg_strength", None)
-                        kw.pop("sway_sampling_coef", None)
-                        result = cls._model.generate(**kw)
-                    else:
-                        raise
+                result = cls._model.generate(**kw)
             if _t.cuda.is_available():
                 _t.cuda.empty_cache()
             return result
