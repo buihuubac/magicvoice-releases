@@ -4694,40 +4694,14 @@ class App(tk.Tk):
             kw["ref_audio"] = self._prepare_ref_audio(ref)
             if vp.ref_text:
                 kw["ref_text"] = vp.ref_text
-            else:
-                # Auto-transcribe TRUOC khi vao omnivoice
-                _auto_text = self._auto_transcribe_ref(kw["ref_audio"], vp)
-                if _auto_text:
-                    kw["ref_text"] = _auto_text
-                    self._log(f"  📝 Auto-transcribe ref: \"{_auto_text[:60]}...\"", "info")
-                else:
-                    # FIX v3.9: KHONG raise loi nua. Thay vao do dung placeholder
-                    # PHU HOP NGON NGU (detect qua ten voice/instruct/text dau vao).
-                    # Voice cu khong co ref_text van chay duoc, khach khong bi block.
-                    # Detect ngon ngu:
-                    _hint = (vp.name or "") + " " + (vp.instruct or "")
-                    _hint_lower = _hint.lower()
-                    # Co tu tieng Anh hoac ten kieu English -> placeholder English
-                    is_english = any(w in _hint_lower for w in [
-                        "english","anh","us","uk","american","british",
-                        "iran","john","jane","mike","tom","jenny","emma",
-                        "narrator","voice","male","female","young","old"
-                    ])
-                    # Mac dinh: tieng Viet (vi MagicVoice chu yeu khach Viet)
-                    if is_english:
-                        placeholder = ("This is a sample voice recording for "
-                                       "reference, used to clone the speaker's tone.")
-                    else:
-                        placeholder = ("Đây là đoạn ghi âm giọng nói mẫu, "
-                                       "dùng làm tham chiếu cho việc nhân bản giọng.")
-                    kw["ref_text"] = placeholder
-                    self._log(
-                        f"  ⚠ Khong transcribe duoc audio mau. Dung placeholder "
-                        f"({'EN' if is_english else 'VI'}) - clone se khong toi uu.\n"
-                        f"     De clone CHINH XAC nhat: vao Clone Voice -> Sua "
-                        f"voice '{vp.name}' -> nhap noi dung audio mau (ref_text) "
-                        f"chinh xac cau ma audio dang doc.",
-                        "warn")
+            # Neu khong co ref_text → omnivoice tu dung Whisper (da cache)
+            # Neu Whisper chua cache → can net de tai lan dau
+            #
+            # QUAN TRONG: KHONG tu y dung placeholder text khi thieu ref_text!
+            # F5/OmniVoice can ref_text KHOP CHINH XAC voi noi dung ref_audio
+            # de align dung. Neu khong khop -> model HALLUCINATE, tu bia van ban.
+            # Neu omnivoice noi bo Whisper transcribe duoc -> dung do (chuan).
+            # Neu Whisper fail -> omnivoice se raise loi, user phai nhap ref_text.
         elif vp.mode == "design":
             if not vp.instruct:
                 raise ValueError("Voice Design thiếu mô tả!")
@@ -5132,90 +5106,14 @@ class App(tk.Tk):
                 t0 = time.time()
                 if self.cancel_ev.is_set():
                     self._log(f"⏹ Đã hủy chunk {ci+1}", "warn"); return
-
-                # FIX v3.22: Detect hallucination chinh xac hon.
-                # Cach cu (so ms/tu voi threshold) khong hieu qua vi 1 tu thua
-                # FIX v3.9: Chong hallucination "tu them tu" trong clone voice.
-                # Diffusion model (F5/OmniVoice) doi khi tu them/lap tu ngau nhien.
-                # Gen 3 LAN voi 3 seed khac nhau, lay ban co do dai gan EXPECTED nhat.
-                # Expected = n_words * 220ms (toc do trung binh).
-                # Ban "binh thuong" co do dai gan expected, ban "hallucinate" se dai hon nhieu.
-                n_words_chunk = max(len(chunk_txt.split()), 1)
-                MIN_WORDS_FOR_RETRY = 4
-                EXPECTED_MS_PER_WORD = 220   # ~220ms/tu o speed 1.0
-                expected_samples = int(n_words_chunk * EXPECTED_MS_PER_WORD * SR / 1000 / max(speed, 0.5))
-
-                candidates = []   # list of (audio_tensor, deviation_from_expected)
-
-                # Gen lan 1 voi seed mac dinh
                 a = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                audio_v1 = _to_tensor(a)
-                if audio_v1 is not None and audio_v1.abs().max() >= 0.0001:
-                    dev = abs(audio_v1.shape[1] - expected_samples)
-                    candidates.append((audio_v1, dev, 42))
-
-                # Neu chunk du dai -> gen them 2 lan voi seed khac
-                if (n_words_chunk >= MIN_WORDS_FOR_RETRY
-                    and candidates
-                    and not self.cancel_ev.is_set()):
-                    for _retry_idx in range(2):
-                        if self.cancel_ev.is_set(): break
-                        try:
-                            new_seed = 42 + (_retry_idx + 1) * 1337 + ci * 7
-                            Backend.set_seed(new_seed)
-                            a_retry = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                            audio_retry = _to_tensor(a_retry)
-                            if audio_retry is not None and audio_retry.abs().max() >= 0.0001:
-                                dev = abs(audio_retry.shape[1] - expected_samples)
-                                candidates.append((audio_retry, dev, new_seed))
-                        except Exception:
-                            pass
-                    Backend.set_seed(42)  # reset ve mac dinh
-
-                # Chon ban co deviation thap nhat (gan expected nhat)
-                if candidates:
-                    candidates.sort(key=lambda x: x[1])
-                    audio_t, best_dev, best_seed = candidates[0]
-                    # Log neu co retry va chon ban khac mac dinh
-                    if len(candidates) > 1:
-                        all_dur = [f"{c[0].shape[1]/SR:.1f}s" for c in candidates]
-                        all_dev_pct = [c[1]/expected_samples*100 for c in candidates]
-                        # Neu deviation cua ban tot nhat van > 50% -> log canh bao
-                        best_pct = best_dev / expected_samples * 100
-                        if best_pct > 50:
-                            self._log(
-                                f"  ⚠ Chunk {ci+1}: 3 lan gen ra {all_dur}, "
-                                f"chon seed {best_seed} (lech {best_pct:.0f}% so voi expected)",
-                                "warn")
-                        else:
-                            # Bo log de tranh spam, chi log khi co retry thanh cong
-                            if candidates[0][2] != 42:
-                                self._log(
-                                    f"  ↻ Chunk {ci+1}: dung seed {best_seed} ({best_dev/SR:.1f}s deviation)",
-                                    "info")
-                else:
-                    audio_t = audio_v1   # fallback
-
                 elapsed = time.time() - t0
-
+                audio_t = _to_tensor(a)
                 if audio_t is None or audio_t.abs().max() < 0.0001:
                     self._log(f"  [{ci+1}/{total}] ⚠ Audio rong - bo qua", "warn")
                     continue
                 self._log(f"  [{ci+1}/{total}] {elapsed:.1f}s | {chunk_txt[:40]}", "info")
-
-                # FIX: Trim silence dau/cuoi + DC offset + fade -> chong giat/pop khi noi
-                # 1. Loai DC offset (cho moi chunk co the lech khac nhau)
-                audio_t = audio_t - audio_t.mean()
-                # 2. Trim silence dau/cuoi de loai khoang lang du thua
-                #    (Edge TTS tu lam, MagicVoice phai lam thu cong)
-                audio_t = _trim_silence(audio_t, sr=SR, threshold=0.005, pad_ms=30)
-                # 3. Fade in/out 8ms de tranh click/pop o cho noi
-                _fade_n = int(0.008 * SR)  # 8ms
-                if audio_t.shape[1] > _fade_n * 2:
-                    _fade = torch.linspace(0., 1., _fade_n)
-                    audio_t[0, :_fade_n] *= _fade
-                    audio_t[0, -_fade_n:] *= _fade.flip(0)
-                parts.append(audio_t)
+                parts.append(audio_t)  # no trim - avoid cutting speech
                 # Thêm im lặng giữa các chunk
                 if pause_ms > 0:
                     parts.append(torch.zeros(1, int(pause_ms * SR / 1000)))
