@@ -43,7 +43,6 @@ try:
 except ImportError:
     HAS_SCRIPT_PROC = False
 from dataclasses import dataclass, asdict
-from typing import Optional
 
 # ── Tự động tìm & thêm ffmpeg vào PATH ──────────────────────────
 def _setup_ffmpeg():
@@ -121,23 +120,59 @@ VOICES_FILE    = _SCRIPT_DIR / "voices_library.json"
 CONFIG_FILE    = _SCRIPT_DIR / "app_config.json"
 CLONE_REFS_DIR = _SCRIPT_DIR / "clone_refs"
 
+def resolve_device(preferred: str) -> str:
+    """
+    Resolve device an toan: neu user yeu cau cuda:N nhung CUDA khong san sang
+    hoac index khong hop le -> fallback ve 'cpu' (khong crash).
+    """
+    if not preferred:
+        preferred = "cuda:0"
+    try:
+        import torch
+        if preferred.startswith("cuda"):
+            if not torch.cuda.is_available():
+                return "cpu"
+            try:
+                idx = int(preferred.split(":", 1)[1]) if ":" in preferred else 0
+            except (ValueError, IndexError):
+                idx = 0
+            if idx >= torch.cuda.device_count():
+                return "cuda:0" if torch.cuda.device_count() > 0 else "cpu"
+            return f"cuda:{idx}"
+        if preferred == "mps":
+            try:
+                if getattr(getattr(torch, "backends", None), "mps", None) and \
+                   torch.backends.mps.is_available():
+                    return "mps"
+            except Exception:
+                pass
+            return "cpu"
+        return preferred  # cpu hoac gia tri tuy chinh
+    except Exception:
+        return "cpu"
+
+
 def load_config() -> dict:
     """Đọc cấu hình đã lưu."""
-    defaults = {"device": "cpu", "dtype": "float16",
+    # MAC DINH: cuda:0 (GPU NVIDIA dau tien). Neu khong co GPU, resolve_device()
+    # se tu dong fallback ve 'cpu' khi su dung -> khong crash.
+    defaults = {"device": "cuda:0", "dtype": "float16",
                 "out_dir": str(Path.home()/"Downloads"/"MagicVoice"),
                 "fmt": ".mp3", "steps": 16, "auto_load": True}
     if CONFIG_FILE.exists():
         try:
             saved = json.loads(CONFIG_FILE.read_text("utf-8"))
             defaults.update(saved)
-        except: pass
+        except Exception:
+            pass
     return defaults
 
 def save_config(cfg: dict):
     """Lưu cấu hình."""
     try:
         CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
-    except: pass
+    except Exception:
+        pass
 
 # ══════════ STYLES ══════════
 def style_entry(w, width=None):
@@ -214,7 +249,7 @@ def parse_srt(txt):
                 if not m: continue
                 text = re.sub(r"<[^>]+>", "", "\n".join(lines[2:])).strip()
                 out.append(SRTEntry(idx, m[1], m[2], text, srt_ms(m[1]), srt_ms(m[2])))
-            except: pass
+            except Exception: pass
         if out: return out
 
     # Thu 2: Parse theo pattern so + timestamp (SRT khong co dong trong)
@@ -232,7 +267,7 @@ def parse_srt(txt):
             text = re.sub(r"<[^>]+>", "", m.group(4)).strip()
             if text:
                 out.append(SRTEntry(idx, ts, te, text, srt_ms(ts), srt_ms(te)))
-        except: pass
+        except Exception: pass
     return out
 
 # ══════════ VOICE LIBRARY ══════════
@@ -646,7 +681,6 @@ def _post_process(tensor, sr=24000):
         pass
 
     # 4. Soft clipping (tránh hard clip gây distortion)
-    import torch
     tensor = torch.tanh(tensor * 0.95) / 0.95
 
     # 5. Peak normalize về -1 dBFS
@@ -705,7 +739,7 @@ def to_mp3(tensor, path):
             path
         ], capture_output=True, creationflags=_flags)
         try: os.remove(tmp)
-        except: pass
+        except Exception: pass
         if r.returncode != 0:
             raise RuntimeError(r.stderr.decode()[-300:])
     except (FileNotFoundError, OSError):
@@ -1131,7 +1165,6 @@ class VoiceDialog(tk.Toplevel):
         """Thu từ microphone."""
         try:
             import sounddevice as sd
-            import numpy as np
         except ImportError:
             messagebox.showerror(
                 "Thiếu thư viện",
@@ -1301,7 +1334,7 @@ class VoiceDialog(tk.Toplevel):
         out_path = _clone_dir / fname
 
         try:
-            import wave, torch as _tc
+            import wave
             # Buoc 1: Luu WAV tam thoi bang wave (khong can ffmpeg/pydub)
             wav_tmp = _clone_dir / fname.replace(".mp3", "_tmp.wav")
             audio_16 = (audio_np * 32767).clip(-32768, 32767).astype(np.int16)
@@ -1319,7 +1352,7 @@ class VoiceDialog(tk.Toplevel):
                     t_wav = torchaudio.functional.resample(t_wav, sr_wav, 24000)
                 to_mp3(t_wav, str(out_path))
                 try: wav_tmp.unlink()
-                except: pass
+                except Exception: pass
                 out_final = out_path
                 fmt_label = "MP3 320kbps"
             except Exception as _mp3_err:
@@ -1331,7 +1364,7 @@ class VoiceDialog(tk.Toplevel):
                     import shutil as _sh
                     _sh.copy2(str(wav_tmp), str(_wav_out))
                 out_final = _wav_out
-                fmt_label = f"WAV"
+                fmt_label = "WAV"
 
             self.ref_audio_var.set(str(out_final))
             self._set_audio_info(str(out_final))
@@ -1932,7 +1965,7 @@ def _download_model_from_drive(log_fn=None, progress_fn=None):
     log_fn(msg, level): callback hien log
     progress_fn(pct, msg): callback hien tien trinh 0-100
     """
-    import urllib.request, zipfile, tempfile, shutil, os
+    import urllib.request, zipfile, tempfile
 
     def _log(msg, lv="info"):
         if log_fn: log_fn(msg, lv)
@@ -1988,7 +2021,7 @@ def _download_model_from_drive(log_fn=None, progress_fn=None):
     finally:
         if tmp_zip.exists():
             try: tmp_zip.unlink()
-            except: pass
+            except Exception: pass
 
 
 
@@ -2008,7 +2041,7 @@ def check_for_update(root, silent=False):
             # So sanh version
             def _ver(v):
                 try: return tuple(int(x) for x in v.split("."))
-                except: return (0,)
+                except Exception: return (0,)
 
             if _ver(latest) <= _ver(CURRENT_VERSION):
                 if not silent:
@@ -2032,7 +2065,7 @@ def check_for_update(root, silent=False):
         dlg.resizable(False, False)
         dlg.grab_set()
         try: dlg.iconbitmap(str(_SCRIPT_DIR / "MagicVoice.ico"))
-        except: pass
+        except Exception: pass
 
         tk.Label(dlg, text="Co ban cap nhat moi!", font=(FN,13,"bold"),
                  bg=P["white"], fg=P["purple"]).pack(pady=(20,4))
@@ -2083,7 +2116,7 @@ def check_for_update(root, silent=False):
             for w in range(0, 280, 14):
                 bar.config(width=w)
                 prog.update()
-                import time; time.sleep(0.02)
+                time.sleep(0.02)
 
             # Backup & download
             shutil.copy(script, backup)
@@ -2117,7 +2150,7 @@ def check_for_update(root, silent=False):
 
             bar.config(width=300)
             prog.update()
-            import time; time.sleep(0.3)
+            time.sleep(0.3)
             prog.destroy()
 
             messagebox.showinfo(
@@ -2131,7 +2164,7 @@ def check_for_update(root, silent=False):
 
         except Exception as e:
             try: prog.destroy()
-            except: pass
+            except Exception: pass
             messagebox.showerror("Loi cap nhat",
                 f"Cap nhat that bai:\n{e}\n\nThu lai sau.")
 
@@ -2177,8 +2210,10 @@ class App(tk.Tk):
         # Tải cấu hình đã lưu
         self._cfg = load_config()
 
-        self.device_var   =tk.StringVar(value=self._cfg.get("device",
-            "cuda:0" if __import__("torch").cuda.is_available() else "cpu"))
+        # MAC DINH cuda:0 (GPU NVIDIA dau tien). resolve_device() se tu dong
+        # fallback ve 'cpu' neu CUDA khong san sang -> khong crash dung GPU thieu.
+        _preferred_device = self._cfg.get("device", "cuda:0")
+        self.device_var   =tk.StringVar(value=resolve_device(_preferred_device))
         self.dtype_var    =tk.StringVar(value=self._cfg.get("dtype","float16"))
         self.steps_var    =tk.IntVar(value=self._cfg.get("steps",8))
         self.speed_var    =tk.DoubleVar(value=1.0)
@@ -2243,7 +2278,8 @@ class App(tk.Tk):
             if getattr(getattr(torch,"backends",None),"mps",None) and \
                torch.backends.mps.is_available():
                 self.devices.append("mps")
-        except: pass
+        except Exception:
+            pass
 
     # ─────────────────────────── LAYOUT ───────────────────────────
     def _build(self):
@@ -2682,7 +2718,6 @@ class App(tk.Tk):
                  bg=P["white"],fg=P["label"]).pack(anchor="w",padx=10,pady=(0,2))
 
         # MOI: PanedWindow chia doi - tren la listbox file, duoi la preview noi dung
-        import tkinter.ttk as _ttk
         paned = tk.PanedWindow(inner, orient="vertical", bg=P["white"],
                                 sashrelief="flat", sashwidth=6, bd=0)
         paned.pack(fill="both", expand=True, padx=10)
@@ -3823,7 +3858,7 @@ class App(tk.Tk):
 
     def _init_network_mode(self):
         """Kiem tra mang ngay khi khoi dong, set env vars va socket timeout."""
-        import os as _os, socket as _sock, time as _t
+        import socket as _sock, time as _t
         try:
             _s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
             _s.settimeout(2)
@@ -3879,7 +3914,7 @@ class App(tk.Tk):
                 _sock.setdefaulttimeout(3)
                 _sock.socket().connect(("8.8.8.8", 53))
                 online = True
-            except:
+            except Exception:
                 online = False
             self.after(0, lambda: _update(online))
         def _update(online):
@@ -3897,7 +3932,7 @@ class App(tk.Tk):
             else:
                 if was_offline:
                     try: self._offline_badge.destroy()
-                    except: pass
+                    except Exception: pass
                     del self._offline_badge
                     self._log("🌐 Co mang — da chuyen Online!", "ok")
                 self._online_cache_time = 0  # Force re-check lan sau
@@ -4227,7 +4262,7 @@ class App(tk.Tk):
 
         def _gen():
             try:
-                import torchaudio, tempfile, os
+                import torchaudio, tempfile
                 kw = self._vkw()
                 a  = Backend.gen(sample, num_step=self.steps_var.get(),
                                  speed=self._get_speed(), **kw)
@@ -4264,7 +4299,7 @@ class App(tk.Tk):
                 winsound.PlaySound(None, winsound.SND_PURGE)
             if hasattr(self, "_prev_tmp") and os.path.exists(self._prev_tmp):
                 try: os.remove(self._prev_tmp)
-                except: pass
+                except Exception: pass
         except Exception:
             pass
         self.prev_btn.config(text="▶  Thử Giọng", state="normal", bg="#f0fdf4")
@@ -4832,7 +4867,7 @@ class App(tk.Tk):
         Chi cat khi qua 90s de tranh OOM. Giu nguyen nhung gi user da chuan bi.
         """
         try:
-            import torchaudio, torch
+            import torchaudio
             from pathlib import Path as _P
             MAX_SEC = 90   # Truoc: 30s -> qua ngan, mat phong cach giong
             t, sr = _safe_audio_load(audio_path)
@@ -4871,7 +4906,6 @@ class App(tk.Tk):
 
     def _save(self, tensor, path):
         """Lưu audio — post-process 1 lần."""
-        import torch
         if hasattr(self, "post_proc_var") and self.post_proc_var.get():
             tensor = _post_process(tensor)
         else:
@@ -4886,7 +4920,6 @@ class App(tk.Tk):
                     wav_path = path.replace(".mp3", ".wav")
                     to_wav(tensor, wav_path)
                     # Doi ten path thanh wav
-                    import shutil as _sh
                     if os.path.exists(wav_path):
                         path = wav_path
             except Exception:
@@ -5294,7 +5327,7 @@ class App(tk.Tk):
         self._busy(True)
         self._start_timer()
         try:
-            import asyncio, tempfile, torchaudio, torch, re as _re
+            import asyncio, tempfile, torchaudio, torch
 
             # Lay voice tu edge_voice_var - luon dung gia tri hien tai
             # edge_voice_var duoc set boi _on_edge_voice_select khi chon listbox
@@ -5346,7 +5379,7 @@ class App(tk.Tk):
                         err_msg = str(e).lower()
                         # Neu la loi mang -> fallback luon, khong retry
                         if any(x in err_msg for x in ["network","connect","timeout","ssl","winerror","dns","resolve"]):
-                            self._log(f"  ⚠ Edge TTS mat mang — chuyen sang MagicVoice Clone", "warn")
+                            self._log("  ⚠ Edge TTS mat mang — chuyen sang MagicVoice Clone", "warn")
                             return "fallback"
                     # Sleep truoc khi retry
                     if _attempt < 2:
@@ -5571,7 +5604,6 @@ class App(tk.Tk):
                 pause = 0.3
             else:
                 pause = 0.5
-            from dataclasses import dataclass
             e = SRTEntry(
                 index=i,
                 start=f"00:00:{t:06.3f}".replace(".",","),
@@ -5680,7 +5712,7 @@ class App(tk.Tk):
                     raise RuntimeError("Edge TTS khong tao duoc audio")
                 t, sr = _safe_audio_load(tmp_mp3)
                 try: Path(tmp_mp3).unlink()
-                except: pass
+                except Exception: pass
                 if sr != SR:
                     t = _ta.functional.resample(t, sr, SR)
                 if t.shape[0] > 1:
@@ -6407,7 +6439,7 @@ class App(tk.Tk):
                 if ask_name:
                     v = self._ask_output_filename(default_name, Path(fp).name)
                     if v is None or v.strip() == "":
-                        self._log(f"  ⏭ Bỏ qua (user không đặt tên)", "warn")
+                        self._log("  ⏭ Bỏ qua (user không đặt tên)", "warn")
                         skipped += 1; continue
                     default_name = v.strip()
 
@@ -6476,7 +6508,7 @@ class App(tk.Tk):
 
     def _concat(self, segs, out, gap_ms):
         """Ghép danh sách tensor hoặc WAV file thành 1 file output."""
-        import torch, torchaudio, tempfile
+        import torch, torchaudio
         SR = 24000
 
         # segs có thể là list[Tensor] hoặc list[str] (WAV paths)
@@ -6505,7 +6537,7 @@ class App(tk.Tk):
         for seg in segs:
             if isinstance(seg, str):
                 try: os.remove(seg)
-                except: pass
+                except Exception: pass
 
     # ─────── SRT loader ────────────────────────────────────────────
     def _show_script_preview(self):
@@ -6741,7 +6773,7 @@ class App(tk.Tk):
                 e.text.replace("\n"," ")[:120]), tags=(tag,))
         try:
             self.srt_tree.tag_configure("toolong", foreground="#ef4444")
-        except: pass
+        except Exception: pass
 
     def _open_srt(self):
         p = filedialog.askopenfilename(title="Chọn file .srt",
@@ -6751,7 +6783,7 @@ class App(tk.Tk):
         text = ""
         for enc in ("utf-8","utf-8-sig","utf-16","latin-1"):
             try: text = Path(p).read_text(encoding=enc); break
-            except: pass
+            except Exception: pass
         self._load_srt_content(text, Path(p).name)
 
     def _srt_paste(self):
@@ -7091,7 +7123,6 @@ if __name__ == "__main__":
         pass
 
     # ── Dang nhap tai khoan ───────────────────────────────────────
-    import tkinter as _tk_login
 
     def _show_login():
         import json as _json, tkinter as _tk
@@ -7103,15 +7134,15 @@ if __name__ == "__main__":
                 if _cache.exists():
                     d = _json.loads(_cache.read_text("utf-8"))
                     return d.get("username",""), d.get("password",""), d.get("remember",False)
-            except: pass
+            except Exception: pass
             return "","",False
         def _save(u,p): 
             try: _cache.write_text(_json.dumps({"username":u,"password":p,"remember":True}),"utf-8")
-            except: pass
+            except Exception: pass
         def _clear():
             try:
                 if _cache.exists(): _cache.unlink()
-            except: pass
+            except Exception: pass
 
         su, sp, sr = _load()
         ok = [False, ""]
@@ -7131,7 +7162,7 @@ if __name__ == "__main__":
                 ico_str = str(ico)
                 win.iconbitmap(default=ico_str)
                 win.after(0, lambda: win.iconbitmap(default=ico_str))
-        except: pass
+        except Exception: pass
 
         c = _tk.Canvas(win,width=440,height=580,bg="#0f1117",highlightthickness=0)
         c.pack(fill="both",expand=True)
@@ -7185,7 +7216,7 @@ if __name__ == "__main__":
                         _sock.setdefaulttimeout(1)  # 1s: fail nhanh, giai phong lock som
                         _sock.socket().connect(("8.8.8.8", 53))
                         return True
-                    except: return False
+                    except Exception: return False
 
                 if _has_internet():
                     r, m = verify_login(u, p)
@@ -7241,7 +7272,7 @@ if __name__ == "__main__":
 
         win.mainloop()
         try: win.destroy()
-        except: pass
+        except Exception: pass
         return ok[0], ok[1]
 
     import os as _os, sys as _sys
@@ -7269,7 +7300,7 @@ if __name__ == "__main__":
                 except Exception:
                     # psutil loi hoac process khong ton tai → xoa lock cu
                     try: _os.remove(_lock_file)
-                    except: pass
+                    except Exception: pass
 
                 if is_running:
                     import tkinter as _tk2
@@ -7282,11 +7313,11 @@ if __name__ == "__main__":
                 else:
                     # Lock cu (app bi tat dot ngot) → xoa va tiep tuc
                     try: _os.remove(_lock_file)
-                    except: pass
+                    except Exception: pass
             except (ValueError, PermissionError, OSError):
                 # File lock bi loi → xoa va tiep tuc
                 try: _os.remove(_lock_file)
-                except: pass
+                except Exception: pass
         # Ghi PID hien tai
         try:
             with open(_lock_file, "w") as f:
@@ -7308,7 +7339,9 @@ if __name__ == "__main__":
         _sys.exit(0)
     # Lay username tu login_msg hoac cache
     try:
-        import json as _jj, base64 as _b64
+        import json as _jj
+        import base64 as _b64
+        from pathlib import Path as _Path
         _cache = _Path(__file__).parent / ".login_cache"
         _d = _jj.loads(_b64.b64decode(_cache.read_text()).decode())
         _last_username = _d.get("u", "")
