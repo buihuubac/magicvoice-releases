@@ -43,6 +43,7 @@ try:
 except ImportError:
     HAS_SCRIPT_PROC = False
 from dataclasses import dataclass, asdict
+from typing import Optional
 
 # ── Tự động tìm & thêm ffmpeg vào PATH ──────────────────────────
 def _setup_ffmpeg():
@@ -120,59 +121,23 @@ VOICES_FILE    = _SCRIPT_DIR / "voices_library.json"
 CONFIG_FILE    = _SCRIPT_DIR / "app_config.json"
 CLONE_REFS_DIR = _SCRIPT_DIR / "clone_refs"
 
-def resolve_device(preferred: str) -> str:
-    """
-    Resolve device an toan: neu user yeu cau cuda:N nhung CUDA khong san sang
-    hoac index khong hop le -> fallback ve 'cpu' (khong crash).
-    """
-    if not preferred:
-        preferred = "cuda:0"
-    try:
-        import torch
-        if preferred.startswith("cuda"):
-            if not torch.cuda.is_available():
-                return "cpu"
-            try:
-                idx = int(preferred.split(":", 1)[1]) if ":" in preferred else 0
-            except (ValueError, IndexError):
-                idx = 0
-            if idx >= torch.cuda.device_count():
-                return "cuda:0" if torch.cuda.device_count() > 0 else "cpu"
-            return f"cuda:{idx}"
-        if preferred == "mps":
-            try:
-                if getattr(getattr(torch, "backends", None), "mps", None) and \
-                   torch.backends.mps.is_available():
-                    return "mps"
-            except Exception:
-                pass
-            return "cpu"
-        return preferred  # cpu hoac gia tri tuy chinh
-    except Exception:
-        return "cpu"
-
-
 def load_config() -> dict:
     """Đọc cấu hình đã lưu."""
-    # MAC DINH: cuda:0 (GPU NVIDIA dau tien). Neu khong co GPU, resolve_device()
-    # se tu dong fallback ve 'cpu' khi su dung -> khong crash.
-    defaults = {"device": "cuda:0", "dtype": "float16",
+    defaults = {"device": "cpu", "dtype": "float16",
                 "out_dir": str(Path.home()/"Downloads"/"MagicVoice"),
                 "fmt": ".mp3", "steps": 16, "auto_load": True}
     if CONFIG_FILE.exists():
         try:
             saved = json.loads(CONFIG_FILE.read_text("utf-8"))
             defaults.update(saved)
-        except Exception:
-            pass
+        except: pass
     return defaults
 
 def save_config(cfg: dict):
     """Lưu cấu hình."""
     try:
         CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), "utf-8")
-    except Exception:
-        pass
+    except: pass
 
 # ══════════ STYLES ══════════
 def style_entry(w, width=None):
@@ -249,7 +214,7 @@ def parse_srt(txt):
                 if not m: continue
                 text = re.sub(r"<[^>]+>", "", "\n".join(lines[2:])).strip()
                 out.append(SRTEntry(idx, m[1], m[2], text, srt_ms(m[1]), srt_ms(m[2])))
-            except Exception: pass
+            except: pass
         if out: return out
 
     # Thu 2: Parse theo pattern so + timestamp (SRT khong co dong trong)
@@ -267,7 +232,7 @@ def parse_srt(txt):
             text = re.sub(r"<[^>]+>", "", m.group(4)).strip()
             if text:
                 out.append(SRTEntry(idx, ts, te, text, srt_ms(ts), srt_ms(te)))
-        except Exception: pass
+        except: pass
     return out
 
 # ══════════ VOICE LIBRARY ══════════
@@ -536,16 +501,32 @@ class Backend:
         if ref_text:  kw['ref_text']  = ref_text
         if instruct:  kw['instruct']  = _normalize_instruct(instruct)
 
-        # GIU NGUYEN params goc cua model. Khong tu y bo sung cfg_strength /
-        # sway_sampling_coef vi:
-        #   - cfg_strength > 2.0 lam giong clone bi meo, ngat cut, lap tu
-        #   - sway_sampling_coef = -1.0 co the gay artifacts khi model khong
-        #     hoan toan tuong thich F5 paper sampling
-        # Cac giong dong cua model OmniVoice da duoc cau hinh toi uu boi tac gia.
+        # FIX: chong F5-TTS hallucinate (chèn từ tu ref_audio/ref_text vao gen).
+        # Day la van de da biet cua F5: github.com/SWivid/F5-TTS/issues/85
+        # Cac param sau giup model bam sat text hon, it chen tu lac:
+        #   cfg_strength=2.5 (default 2.0) -> tang guidance, model bam text chac hon
+        #   sway_sampling_coef=-1.0 -> theo F5 paper, cai thien robustness
+        # Truyen them neu omnivoice/F5 ho tro - khong fail neu khong support
+        for opt_key, opt_val in (
+            ("cfg_strength",       2.5),
+            ("sway_sampling_coef", -1.0),
+        ):
+            kw[opt_key] = opt_val
 
         try:
             with _t.inference_mode():
-                result = cls._model.generate(**kw)
+                try:
+                    result = cls._model.generate(**kw)
+                except TypeError as _te:
+                    # Backend cu khong nhan cfg_strength / sway_sampling_coef -> fallback
+                    err_str = str(_te).lower()
+                    if "unexpected keyword" in err_str or "got an unexpected" in err_str:
+                        # Bo cac param mo rong, gen lai voi param co ban
+                        kw.pop("cfg_strength", None)
+                        kw.pop("sway_sampling_coef", None)
+                        result = cls._model.generate(**kw)
+                    else:
+                        raise
             if _t.cuda.is_available():
                 _t.cuda.empty_cache()
             return result
@@ -665,6 +646,7 @@ def _post_process(tensor, sr=24000):
         pass
 
     # 4. Soft clipping (tránh hard clip gây distortion)
+    import torch
     tensor = torch.tanh(tensor * 0.95) / 0.95
 
     # 5. Peak normalize về -1 dBFS
@@ -723,7 +705,7 @@ def to_mp3(tensor, path):
             path
         ], capture_output=True, creationflags=_flags)
         try: os.remove(tmp)
-        except Exception: pass
+        except: pass
         if r.returncode != 0:
             raise RuntimeError(r.stderr.decode()[-300:])
     except (FileNotFoundError, OSError):
@@ -1149,6 +1131,7 @@ class VoiceDialog(tk.Toplevel):
         """Thu từ microphone."""
         try:
             import sounddevice as sd
+            import numpy as np
         except ImportError:
             messagebox.showerror(
                 "Thiếu thư viện",
@@ -1318,7 +1301,7 @@ class VoiceDialog(tk.Toplevel):
         out_path = _clone_dir / fname
 
         try:
-            import wave
+            import wave, torch as _tc
             # Buoc 1: Luu WAV tam thoi bang wave (khong can ffmpeg/pydub)
             wav_tmp = _clone_dir / fname.replace(".mp3", "_tmp.wav")
             audio_16 = (audio_np * 32767).clip(-32768, 32767).astype(np.int16)
@@ -1336,7 +1319,7 @@ class VoiceDialog(tk.Toplevel):
                     t_wav = torchaudio.functional.resample(t_wav, sr_wav, 24000)
                 to_mp3(t_wav, str(out_path))
                 try: wav_tmp.unlink()
-                except Exception: pass
+                except: pass
                 out_final = out_path
                 fmt_label = "MP3 320kbps"
             except Exception as _mp3_err:
@@ -1348,7 +1331,7 @@ class VoiceDialog(tk.Toplevel):
                     import shutil as _sh
                     _sh.copy2(str(wav_tmp), str(_wav_out))
                 out_final = _wav_out
-                fmt_label = "WAV"
+                fmt_label = f"WAV"
 
             self.ref_audio_var.set(str(out_final))
             self._set_audio_info(str(out_final))
@@ -1949,7 +1932,7 @@ def _download_model_from_drive(log_fn=None, progress_fn=None):
     log_fn(msg, level): callback hien log
     progress_fn(pct, msg): callback hien tien trinh 0-100
     """
-    import urllib.request, zipfile, tempfile
+    import urllib.request, zipfile, tempfile, shutil, os
 
     def _log(msg, lv="info"):
         if log_fn: log_fn(msg, lv)
@@ -2005,7 +1988,7 @@ def _download_model_from_drive(log_fn=None, progress_fn=None):
     finally:
         if tmp_zip.exists():
             try: tmp_zip.unlink()
-            except Exception: pass
+            except: pass
 
 
 
@@ -2025,7 +2008,7 @@ def check_for_update(root, silent=False):
             # So sanh version
             def _ver(v):
                 try: return tuple(int(x) for x in v.split("."))
-                except Exception: return (0,)
+                except: return (0,)
 
             if _ver(latest) <= _ver(CURRENT_VERSION):
                 if not silent:
@@ -2049,7 +2032,7 @@ def check_for_update(root, silent=False):
         dlg.resizable(False, False)
         dlg.grab_set()
         try: dlg.iconbitmap(str(_SCRIPT_DIR / "MagicVoice.ico"))
-        except Exception: pass
+        except: pass
 
         tk.Label(dlg, text="Co ban cap nhat moi!", font=(FN,13,"bold"),
                  bg=P["white"], fg=P["purple"]).pack(pady=(20,4))
@@ -2100,7 +2083,7 @@ def check_for_update(root, silent=False):
             for w in range(0, 280, 14):
                 bar.config(width=w)
                 prog.update()
-                time.sleep(0.02)
+                import time; time.sleep(0.02)
 
             # Backup & download
             shutil.copy(script, backup)
@@ -2134,7 +2117,7 @@ def check_for_update(root, silent=False):
 
             bar.config(width=300)
             prog.update()
-            time.sleep(0.3)
+            import time; time.sleep(0.3)
             prog.destroy()
 
             messagebox.showinfo(
@@ -2148,7 +2131,7 @@ def check_for_update(root, silent=False):
 
         except Exception as e:
             try: prog.destroy()
-            except Exception: pass
+            except: pass
             messagebox.showerror("Loi cap nhat",
                 f"Cap nhat that bai:\n{e}\n\nThu lai sau.")
 
@@ -2194,10 +2177,8 @@ class App(tk.Tk):
         # Tải cấu hình đã lưu
         self._cfg = load_config()
 
-        # MAC DINH cuda:0 (GPU NVIDIA dau tien). resolve_device() se tu dong
-        # fallback ve 'cpu' neu CUDA khong san sang -> khong crash dung GPU thieu.
-        _preferred_device = self._cfg.get("device", "cuda:0")
-        self.device_var   =tk.StringVar(value=resolve_device(_preferred_device))
+        self.device_var   =tk.StringVar(value=self._cfg.get("device",
+            "cuda:0" if __import__("torch").cuda.is_available() else "cpu"))
         self.dtype_var    =tk.StringVar(value=self._cfg.get("dtype","float16"))
         self.steps_var    =tk.IntVar(value=self._cfg.get("steps",8))
         self.speed_var    =tk.DoubleVar(value=1.0)
@@ -2262,8 +2243,7 @@ class App(tk.Tk):
             if getattr(getattr(torch,"backends",None),"mps",None) and \
                torch.backends.mps.is_available():
                 self.devices.append("mps")
-        except Exception:
-            pass
+        except: pass
 
     # ─────────────────────────── LAYOUT ───────────────────────────
     def _build(self):
@@ -2702,6 +2682,7 @@ class App(tk.Tk):
                  bg=P["white"],fg=P["label"]).pack(anchor="w",padx=10,pady=(0,2))
 
         # MOI: PanedWindow chia doi - tren la listbox file, duoi la preview noi dung
+        import tkinter.ttk as _ttk
         paned = tk.PanedWindow(inner, orient="vertical", bg=P["white"],
                                 sashrelief="flat", sashwidth=6, bd=0)
         paned.pack(fill="both", expand=True, padx=10)
@@ -2792,12 +2773,6 @@ class App(tk.Tk):
             all_units.extend(units)
 
         # B2: chia all_units thanh chunks theo min/max
-        # Quy tac:
-        #   - Neu cur < min_w: BAT BUOC them unit ke tiep (du co the vuot max)
-        #   - Neu cur >= min_w va cur + u <= max_w: them unit, neu cur >= max_w thi flush
-        #   - Neu cur >= min_w va cur + u > max_w: kiem tra
-        #       + Neu cur + u <= max_w + ovfl: them roi flush
-        #       + Nguoc lai: flush cur, bat dau chunk moi voi u
         chunks = []
         cur, cw = [], 0
         for u in all_units:
@@ -2807,21 +2782,18 @@ class App(tk.Tk):
             elif cw < min_w:
                 # CHUA du min -> bat buoc them, ke ca khi vuot max
                 cur.append(u); cw += uw
-                # Neu sau khi them >= max thi flush
                 if cw >= max_w:
                     chunks.append(" ".join(cur).strip()); cur, cw = [], 0
             else:
-                # cur da du min_w, can quyet dinh co them u nua khong
+                # cur da du min_w
                 if cw + uw <= max_w:
                     cur.append(u); cw += uw
                     if cw >= max_w:
                         chunks.append(" ".join(cur).strip()); cur, cw = [], 0
                 elif cw + uw <= max_w + ovfl:
-                    # Cho phep tran trong khoang ovfl roi flush
                     cur.append(u); cw += uw
                     chunks.append(" ".join(cur).strip()); cur, cw = [], 0
                 else:
-                    # Khong them duoc nua -> flush cur, bat dau chunk moi voi u
                     chunks.append(" ".join(cur).strip())
                     cur, cw = [u], uw
 
@@ -2829,7 +2801,6 @@ class App(tk.Tk):
         if cur:
             joined = " ".join(cur).strip()
             if cw < min_w and chunks:
-                # Chunk cuoi qua ngan -> co gop voi chunk truoc duoc khong
                 last = chunks[-1]
                 if self._count_words(last) + cw <= max_w + ovfl:
                     chunks[-1] = last + " " + joined
@@ -3842,7 +3813,7 @@ class App(tk.Tk):
 
     def _init_network_mode(self):
         """Kiem tra mang ngay khi khoi dong, set env vars va socket timeout."""
-        import socket as _sock, time as _t
+        import os as _os, socket as _sock, time as _t
         try:
             _s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
             _s.settimeout(2)
@@ -3898,7 +3869,7 @@ class App(tk.Tk):
                 _sock.setdefaulttimeout(3)
                 _sock.socket().connect(("8.8.8.8", 53))
                 online = True
-            except Exception:
+            except:
                 online = False
             self.after(0, lambda: _update(online))
         def _update(online):
@@ -3916,7 +3887,7 @@ class App(tk.Tk):
             else:
                 if was_offline:
                     try: self._offline_badge.destroy()
-                    except Exception: pass
+                    except: pass
                     del self._offline_badge
                     self._log("🌐 Co mang — da chuyen Online!", "ok")
                 self._online_cache_time = 0  # Force re-check lan sau
@@ -4246,7 +4217,7 @@ class App(tk.Tk):
 
         def _gen():
             try:
-                import torchaudio, tempfile
+                import torchaudio, tempfile, os
                 kw = self._vkw()
                 a  = Backend.gen(sample, num_step=self.steps_var.get(),
                                  speed=self._get_speed(), **kw)
@@ -4283,7 +4254,7 @@ class App(tk.Tk):
                 winsound.PlaySound(None, winsound.SND_PURGE)
             if hasattr(self, "_prev_tmp") and os.path.exists(self._prev_tmp):
                 try: os.remove(self._prev_tmp)
-                except Exception: pass
+                except: pass
         except Exception:
             pass
         self.prev_btn.config(text="▶  Thử Giọng", state="normal", bg="#f0fdf4")
@@ -4694,14 +4665,40 @@ class App(tk.Tk):
             kw["ref_audio"] = self._prepare_ref_audio(ref)
             if vp.ref_text:
                 kw["ref_text"] = vp.ref_text
-            # Neu khong co ref_text → omnivoice tu dung Whisper (da cache)
-            # Neu Whisper chua cache → can net de tai lan dau
-            #
-            # QUAN TRONG: KHONG tu y dung placeholder text khi thieu ref_text!
-            # F5/OmniVoice can ref_text KHOP CHINH XAC voi noi dung ref_audio
-            # de align dung. Neu khong khop -> model HALLUCINATE, tu bia van ban.
-            # Neu omnivoice noi bo Whisper transcribe duoc -> dung do (chuan).
-            # Neu Whisper fail -> omnivoice se raise loi, user phai nhap ref_text.
+            else:
+                # Auto-transcribe TRUOC khi vao omnivoice
+                _auto_text = self._auto_transcribe_ref(kw["ref_audio"], vp)
+                if _auto_text:
+                    kw["ref_text"] = _auto_text
+                    self._log(f"  📝 Auto-transcribe ref: \"{_auto_text[:60]}...\"", "info")
+                else:
+                    # FIX v3.9: KHONG raise loi nua. Thay vao do dung placeholder
+                    # PHU HOP NGON NGU (detect qua ten voice/instruct/text dau vao).
+                    # Voice cu khong co ref_text van chay duoc, khach khong bi block.
+                    # Detect ngon ngu:
+                    _hint = (vp.name or "") + " " + (vp.instruct or "")
+                    _hint_lower = _hint.lower()
+                    # Co tu tieng Anh hoac ten kieu English -> placeholder English
+                    is_english = any(w in _hint_lower for w in [
+                        "english","anh","us","uk","american","british",
+                        "iran","john","jane","mike","tom","jenny","emma",
+                        "narrator","voice","male","female","young","old"
+                    ])
+                    # Mac dinh: tieng Viet (vi MagicVoice chu yeu khach Viet)
+                    if is_english:
+                        placeholder = ("This is a sample voice recording for "
+                                       "reference, used to clone the speaker's tone.")
+                    else:
+                        placeholder = ("Đây là đoạn ghi âm giọng nói mẫu, "
+                                       "dùng làm tham chiếu cho việc nhân bản giọng.")
+                    kw["ref_text"] = placeholder
+                    self._log(
+                        f"  ⚠ Khong transcribe duoc audio mau. Dung placeholder "
+                        f"({'EN' if is_english else 'VI'}) - clone se khong toi uu.\n"
+                        f"     De clone CHINH XAC nhat: vao Clone Voice -> Sua "
+                        f"voice '{vp.name}' -> nhap noi dung audio mau (ref_text) "
+                        f"chinh xac cau ma audio dang doc.",
+                        "warn")
         elif vp.mode == "design":
             if not vp.instruct:
                 raise ValueError("Voice Design thiếu mô tả!")
@@ -4731,8 +4728,25 @@ class App(tk.Tk):
             return cached
 
         # 2. Thu faster-whisper (uu tien - nhe va nhanh)
+        # Neu chua cai -> tu dong cai (chi 1 lan)
         try:
             from faster_whisper import WhisperModel
+        except ImportError:
+            self._log("  ⏳ Lan dau dung clone voice - dang cai faster-whisper...", "info")
+            try:
+                import subprocess as _sp_w, sys as _sys_w
+                _flags_w = 0x08000000 if os.name == "nt" else 0
+                _sp_w.run([_sys_w.executable, "-m", "pip", "install",
+                          "faster-whisper", "--quiet", "--no-cache-dir"],
+                         creationflags=_flags_w, timeout=180)
+                from faster_whisper import WhisperModel  # thu import lai
+                self._log("  ✓ Cai faster-whisper thanh cong", "ok")
+            except Exception as _e:
+                self._log(f"  ⚠ Khong cai duoc faster-whisper: {str(_e)[:80]}", "warn")
+                WhisperModel = None
+        try:
+            if WhisperModel is None:
+                raise ImportError("WhisperModel not available")
             self._log("  ⏳ Đang nhận diện ref_audio (faster-whisper medium)...", "info")
             # FIX v3.18: doi tu "small" (244MB) -> "medium" (~1.5GB)
             # de transcribe CHINH XAC hon, tranh sai chu lam clone bi nghen.
@@ -4825,7 +4839,7 @@ class App(tk.Tk):
         Chi cat khi qua 90s de tranh OOM. Giu nguyen nhung gi user da chuan bi.
         """
         try:
-            import torchaudio
+            import torchaudio, torch
             from pathlib import Path as _P
             MAX_SEC = 90   # Truoc: 30s -> qua ngan, mat phong cach giong
             t, sr = _safe_audio_load(audio_path)
@@ -4864,6 +4878,7 @@ class App(tk.Tk):
 
     def _save(self, tensor, path):
         """Lưu audio — post-process 1 lần."""
+        import torch
         if hasattr(self, "post_proc_var") and self.post_proc_var.get():
             tensor = _post_process(tensor)
         else:
@@ -4878,6 +4893,7 @@ class App(tk.Tk):
                     wav_path = path.replace(".mp3", ".wav")
                     to_wav(tensor, wav_path)
                     # Doi ten path thanh wav
+                    import shutil as _sh
                     if os.path.exists(wav_path):
                         path = wav_path
             except Exception:
@@ -5106,14 +5122,90 @@ class App(tk.Tk):
                 t0 = time.time()
                 if self.cancel_ev.is_set():
                     self._log(f"⏹ Đã hủy chunk {ci+1}", "warn"); return
+
+                # FIX v3.22: Detect hallucination chinh xac hon.
+                # Cach cu (so ms/tu voi threshold) khong hieu qua vi 1 tu thua
+                # FIX v3.9: Chong hallucination "tu them tu" trong clone voice.
+                # Diffusion model (F5/OmniVoice) doi khi tu them/lap tu ngau nhien.
+                # Gen 3 LAN voi 3 seed khac nhau, lay ban co do dai gan EXPECTED nhat.
+                # Expected = n_words * 220ms (toc do trung binh).
+                # Ban "binh thuong" co do dai gan expected, ban "hallucinate" se dai hon nhieu.
+                n_words_chunk = max(len(chunk_txt.split()), 1)
+                MIN_WORDS_FOR_RETRY = 4
+                EXPECTED_MS_PER_WORD = 220   # ~220ms/tu o speed 1.0
+                expected_samples = int(n_words_chunk * EXPECTED_MS_PER_WORD * SR / 1000 / max(speed, 0.5))
+
+                candidates = []   # list of (audio_tensor, deviation_from_expected)
+
+                # Gen lan 1 voi seed mac dinh
                 a = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
+                audio_v1 = _to_tensor(a)
+                if audio_v1 is not None and audio_v1.abs().max() >= 0.0001:
+                    dev = abs(audio_v1.shape[1] - expected_samples)
+                    candidates.append((audio_v1, dev, 42))
+
+                # Neu chunk du dai -> gen them 2 lan voi seed khac
+                if (n_words_chunk >= MIN_WORDS_FOR_RETRY
+                    and candidates
+                    and not self.cancel_ev.is_set()):
+                    for _retry_idx in range(2):
+                        if self.cancel_ev.is_set(): break
+                        try:
+                            new_seed = 42 + (_retry_idx + 1) * 1337 + ci * 7
+                            Backend.set_seed(new_seed)
+                            a_retry = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
+                            audio_retry = _to_tensor(a_retry)
+                            if audio_retry is not None and audio_retry.abs().max() >= 0.0001:
+                                dev = abs(audio_retry.shape[1] - expected_samples)
+                                candidates.append((audio_retry, dev, new_seed))
+                        except Exception:
+                            pass
+                    Backend.set_seed(42)  # reset ve mac dinh
+
+                # Chon ban co deviation thap nhat (gan expected nhat)
+                if candidates:
+                    candidates.sort(key=lambda x: x[1])
+                    audio_t, best_dev, best_seed = candidates[0]
+                    # Log neu co retry va chon ban khac mac dinh
+                    if len(candidates) > 1:
+                        all_dur = [f"{c[0].shape[1]/SR:.1f}s" for c in candidates]
+                        all_dev_pct = [c[1]/expected_samples*100 for c in candidates]
+                        # Neu deviation cua ban tot nhat van > 50% -> log canh bao
+                        best_pct = best_dev / expected_samples * 100
+                        if best_pct > 50:
+                            self._log(
+                                f"  ⚠ Chunk {ci+1}: 3 lan gen ra {all_dur}, "
+                                f"chon seed {best_seed} (lech {best_pct:.0f}% so voi expected)",
+                                "warn")
+                        else:
+                            # Bo log de tranh spam, chi log khi co retry thanh cong
+                            if candidates[0][2] != 42:
+                                self._log(
+                                    f"  ↻ Chunk {ci+1}: dung seed {best_seed} ({best_dev/SR:.1f}s deviation)",
+                                    "info")
+                else:
+                    audio_t = audio_v1   # fallback
+
                 elapsed = time.time() - t0
-                audio_t = _to_tensor(a)
+
                 if audio_t is None or audio_t.abs().max() < 0.0001:
                     self._log(f"  [{ci+1}/{total}] ⚠ Audio rong - bo qua", "warn")
                     continue
                 self._log(f"  [{ci+1}/{total}] {elapsed:.1f}s | {chunk_txt[:40]}", "info")
-                parts.append(audio_t)  # no trim - avoid cutting speech
+
+                # FIX: Trim silence dau/cuoi + DC offset + fade -> chong giat/pop khi noi
+                # 1. Loai DC offset (cho moi chunk co the lech khac nhau)
+                audio_t = audio_t - audio_t.mean()
+                # 2. Trim silence dau/cuoi de loai khoang lang du thua
+                #    (Edge TTS tu lam, MagicVoice phai lam thu cong)
+                audio_t = _trim_silence(audio_t, sr=SR, threshold=0.005, pad_ms=30)
+                # 3. Fade in/out 8ms de tranh click/pop o cho noi
+                _fade_n = int(0.008 * SR)  # 8ms
+                if audio_t.shape[1] > _fade_n * 2:
+                    _fade = torch.linspace(0., 1., _fade_n)
+                    audio_t[0, :_fade_n] *= _fade
+                    audio_t[0, -_fade_n:] *= _fade.flip(0)
+                parts.append(audio_t)
                 # Thêm im lặng giữa các chunk
                 if pause_ms > 0:
                     parts.append(torch.zeros(1, int(pause_ms * SR / 1000)))
@@ -5209,7 +5301,7 @@ class App(tk.Tk):
         self._busy(True)
         self._start_timer()
         try:
-            import asyncio, tempfile, torchaudio, torch
+            import asyncio, tempfile, torchaudio, torch, re as _re
 
             # Lay voice tu edge_voice_var - luon dung gia tri hien tai
             # edge_voice_var duoc set boi _on_edge_voice_select khi chon listbox
@@ -5261,7 +5353,7 @@ class App(tk.Tk):
                         err_msg = str(e).lower()
                         # Neu la loi mang -> fallback luon, khong retry
                         if any(x in err_msg for x in ["network","connect","timeout","ssl","winerror","dns","resolve"]):
-                            self._log("  ⚠ Edge TTS mat mang — chuyen sang MagicVoice Clone", "warn")
+                            self._log(f"  ⚠ Edge TTS mat mang — chuyen sang MagicVoice Clone", "warn")
                             return "fallback"
                     # Sleep truoc khi retry
                     if _attempt < 2:
@@ -5486,6 +5578,7 @@ class App(tk.Tk):
                 pause = 0.3
             else:
                 pause = 0.5
+            from dataclasses import dataclass
             e = SRTEntry(
                 index=i,
                 start=f"00:00:{t:06.3f}".replace(".",","),
@@ -5594,7 +5687,7 @@ class App(tk.Tk):
                     raise RuntimeError("Edge TTS khong tao duoc audio")
                 t, sr = _safe_audio_load(tmp_mp3)
                 try: Path(tmp_mp3).unlink()
-                except Exception: pass
+                except: pass
                 if sr != SR:
                     t = _ta.functional.resample(t, sr, SR)
                 if t.shape[0] > 1:
@@ -5696,8 +5789,12 @@ class App(tk.Tk):
                     self._st(f"[{i+1}/{total}] {txt[:45]}…")
 
                     try:
-                        # Split long lines into chunks <= 100 chars
-                        MAX_CH = 300  # Tang len de tranh cat giua ten rieng
+                        # FIX: Giam MAX_CH tu 300 -> 150 vi cau dai gay F5/OmniVoice
+                        # bo doan giua (vi du: "swollen shut, blood dried along her jaw,
+                        # and one shoe..." -> bi bo cum giua). 150 chars la nguong
+                        # an toan: cau dai duoc chia thanh 2-3 chunk, model xu ly tung
+                        # chunk ngan -> khong bo doan, ten rieng van trong cum lien tiep.
+                        MAX_CH = 150
                         import re as _re2
                         if len(txt) <= MAX_CH:
                             chunks = [txt]
@@ -6321,7 +6418,7 @@ class App(tk.Tk):
                 if ask_name:
                     v = self._ask_output_filename(default_name, Path(fp).name)
                     if v is None or v.strip() == "":
-                        self._log("  ⏭ Bỏ qua (user không đặt tên)", "warn")
+                        self._log(f"  ⏭ Bỏ qua (user không đặt tên)", "warn")
                         skipped += 1; continue
                     default_name = v.strip()
 
@@ -6390,7 +6487,7 @@ class App(tk.Tk):
 
     def _concat(self, segs, out, gap_ms):
         """Ghép danh sách tensor hoặc WAV file thành 1 file output."""
-        import torch, torchaudio
+        import torch, torchaudio, tempfile
         SR = 24000
 
         # segs có thể là list[Tensor] hoặc list[str] (WAV paths)
@@ -6419,7 +6516,7 @@ class App(tk.Tk):
         for seg in segs:
             if isinstance(seg, str):
                 try: os.remove(seg)
-                except Exception: pass
+                except: pass
 
     # ─────── SRT loader ────────────────────────────────────────────
     def _show_script_preview(self):
@@ -6655,7 +6752,7 @@ class App(tk.Tk):
                 e.text.replace("\n"," ")[:120]), tags=(tag,))
         try:
             self.srt_tree.tag_configure("toolong", foreground="#ef4444")
-        except Exception: pass
+        except: pass
 
     def _open_srt(self):
         p = filedialog.askopenfilename(title="Chọn file .srt",
@@ -6665,7 +6762,7 @@ class App(tk.Tk):
         text = ""
         for enc in ("utf-8","utf-8-sig","utf-16","latin-1"):
             try: text = Path(p).read_text(encoding=enc); break
-            except Exception: pass
+            except: pass
         self._load_srt_content(text, Path(p).name)
 
     def _srt_paste(self):
@@ -7005,6 +7102,7 @@ if __name__ == "__main__":
         pass
 
     # ── Dang nhap tai khoan ───────────────────────────────────────
+    import tkinter as _tk_login
 
     def _show_login():
         import json as _json, tkinter as _tk
@@ -7016,15 +7114,15 @@ if __name__ == "__main__":
                 if _cache.exists():
                     d = _json.loads(_cache.read_text("utf-8"))
                     return d.get("username",""), d.get("password",""), d.get("remember",False)
-            except Exception: pass
+            except: pass
             return "","",False
         def _save(u,p): 
             try: _cache.write_text(_json.dumps({"username":u,"password":p,"remember":True}),"utf-8")
-            except Exception: pass
+            except: pass
         def _clear():
             try:
                 if _cache.exists(): _cache.unlink()
-            except Exception: pass
+            except: pass
 
         su, sp, sr = _load()
         ok = [False, ""]
@@ -7044,7 +7142,7 @@ if __name__ == "__main__":
                 ico_str = str(ico)
                 win.iconbitmap(default=ico_str)
                 win.after(0, lambda: win.iconbitmap(default=ico_str))
-        except Exception: pass
+        except: pass
 
         c = _tk.Canvas(win,width=440,height=580,bg="#0f1117",highlightthickness=0)
         c.pack(fill="both",expand=True)
@@ -7098,7 +7196,7 @@ if __name__ == "__main__":
                         _sock.setdefaulttimeout(1)  # 1s: fail nhanh, giai phong lock som
                         _sock.socket().connect(("8.8.8.8", 53))
                         return True
-                    except Exception: return False
+                    except: return False
 
                 if _has_internet():
                     r, m = verify_login(u, p)
@@ -7154,7 +7252,7 @@ if __name__ == "__main__":
 
         win.mainloop()
         try: win.destroy()
-        except Exception: pass
+        except: pass
         return ok[0], ok[1]
 
     import os as _os, sys as _sys
@@ -7182,7 +7280,7 @@ if __name__ == "__main__":
                 except Exception:
                     # psutil loi hoac process khong ton tai → xoa lock cu
                     try: _os.remove(_lock_file)
-                    except Exception: pass
+                    except: pass
 
                 if is_running:
                     import tkinter as _tk2
@@ -7195,11 +7293,11 @@ if __name__ == "__main__":
                 else:
                     # Lock cu (app bi tat dot ngot) → xoa va tiep tuc
                     try: _os.remove(_lock_file)
-                    except Exception: pass
+                    except: pass
             except (ValueError, PermissionError, OSError):
                 # File lock bi loi → xoa va tiep tuc
                 try: _os.remove(_lock_file)
-                except Exception: pass
+                except: pass
         # Ghi PID hien tai
         try:
             with open(_lock_file, "w") as f:
@@ -7221,9 +7319,7 @@ if __name__ == "__main__":
         _sys.exit(0)
     # Lay username tu login_msg hoac cache
     try:
-        import json as _jj
-        import base64 as _b64
-        from pathlib import Path as _Path
+        import json as _jj, base64 as _b64
         _cache = _Path(__file__).parent / ".login_cache"
         _d = _jj.loads(_b64.b64decode(_cache.read_text()).decode())
         _last_username = _d.get("u", "")
