@@ -501,29 +501,22 @@ class Backend:
         if ref_text:  kw['ref_text']  = ref_text
         if instruct:  kw['instruct']  = _normalize_instruct(instruct)
 
-        # FIX: chong F5-TTS hallucinate (chèn từ tu ref_audio/ref_text vao gen).
-        # Day la van de da biet cua F5: github.com/SWivid/F5-TTS/issues/85
-        # Cac param sau giup model bam sat text hon, it chen tu lac:
-        #   cfg_strength=2.5 (default 2.0) -> tang guidance, model bam text chac hon
-        #   sway_sampling_coef=-1.0 -> theo F5 paper, cai thien robustness
-        # Truyen them neu omnivoice/F5 ho tro - khong fail neu khong support
-        for opt_key, opt_val in (
-            ("cfg_strength",       2.5),
-            ("sway_sampling_coef", -1.0),
-        ):
-            kw[opt_key] = opt_val
+        # FIX (theo doc OmniVoice chinh thuc github.com/k2-fsa/OmniVoice):
+        # OmniVoice nhan param "guidance_scale" (default 2.0), KHONG phai
+        # "cfg_strength" hay "sway_sampling_coef" (do la F5-TTS, khong ap dung).
+        # guidance_scale cao hon 2.0 -> bam text chat hon, it chen tu lac.
+        # Truyen 2.0 (default) de giu giong tu nhien.
+        kw["guidance_scale"] = 2.0
 
         try:
             with _t.inference_mode():
                 try:
                     result = cls._model.generate(**kw)
                 except TypeError as _te:
-                    # Backend cu khong nhan cfg_strength / sway_sampling_coef -> fallback
+                    # Phien ban omnivoice cu khong nhan guidance_scale -> bo va gen lai
                     err_str = str(_te).lower()
                     if "unexpected keyword" in err_str or "got an unexpected" in err_str:
-                        # Bo cac param mo rong, gen lai voi param co ban
-                        kw.pop("cfg_strength", None)
-                        kw.pop("sway_sampling_coef", None)
+                        kw.pop("guidance_scale", None)
                         result = cls._model.generate(**kw)
                     else:
                         raise
@@ -2115,14 +2108,84 @@ def check_for_update(root, silent=False):
             local_ver_file = script.parent / "version.txt"
             urllib.request.urlretrieve(VERSION_URL, str(local_ver_file))
 
+            # FIX: Xoa CACHE CU truoc khi restart de tranh dung cache loi
+            # tu phien ban truoc (vi du: ref_text Whisper transcribe sai luu vinh vien
+            # vao voices_library.json, .deps_installed flag, __pycache__, .login_cache cu).
+            # Voice clone se transcribe lai tu dau voi code moi -> chinh xac hon.
+            _cache_cleared = []
+            try:
+                # 1. Xoa __pycache__ (cache bytecode Python cua phien ban cu)
+                _pycache = script.parent / "__pycache__"
+                if _pycache.exists():
+                    shutil.rmtree(str(_pycache), ignore_errors=True)
+                    _cache_cleared.append("__pycache__")
+
+                # 2. Xoa .deps_installed flag de check lai dependencies
+                _deps_flag = script.parent / ".deps_installed"
+                if _deps_flag.exists():
+                    _deps_flag.unlink()
+                    _cache_cleared.append(".deps_installed")
+
+                # 3. Xoa cac file _trim*.wav cache cu (ref_audio da cat)
+                # de _prepare_ref_audio cat lai voi MAX_SEC moi
+                for _trim_file in script.parent.rglob("*_trim*.wav"):
+                    try:
+                        _trim_file.unlink()
+                        _cache_cleared.append(_trim_file.name)
+                    except Exception:
+                        pass
+
+                # 4. Reset ref_text trong voices_library.json
+                # Day la nguyen nhan chinh: ref_text bi rac tu Whisper sai phien ban truoc
+                # Reset ve "" -> code moi se transcribe lai voi Whisper moi (chinh xac hon)
+                # KHONG xoa voice, chi reset ref_text cua nhung voice co ref_audio
+                _voices_file = script.parent / "voices_library.json"
+                if _voices_file.exists():
+                    try:
+                        import json as _jc
+                        _data = _jc.loads(_voices_file.read_text(encoding="utf-8"))
+                        _reset_count = 0
+                        for _v in _data:
+                            # Chi reset voice clone (co ref_audio), khong dung voice design
+                            if _v.get("ref_audio") and _v.get("ref_text"):
+                                _old_ref = _v.get("ref_text", "")
+                                # Chi reset neu nghi la rac:
+                                # - Placeholder cu (Xin chao..., This is a sample...)
+                                # - Qua ngan (< 10 ky tu - chac chan rac)
+                                _is_garbage = (
+                                    "Xin chào, đây là giọng đọc mẫu" in _old_ref
+                                    or "This is a sample voice recording" in _old_ref
+                                    or "Đây là đoạn ghi âm giọng" in _old_ref
+                                    or len(_old_ref.strip()) < 10
+                                )
+                                if _is_garbage:
+                                    _v["ref_text"] = ""
+                                    _reset_count += 1
+                        if _reset_count > 0:
+                            _voices_file.write_text(
+                                _jc.dumps(_data, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+                            _cache_cleared.append(f"reset {_reset_count} voice ref_text rac")
+                    except Exception as _ve:
+                        print(f"[Update] Loi reset ref_text: {_ve}")
+            except Exception as _ce:
+                print(f"[Update] Loi xoa cache: {_ce}")
+
             bar.config(width=300)
             prog.update()
-            import time; time.sleep(0.3)
+            time.sleep(0.3)
             prog.destroy()
+
+            _cache_msg = ""
+            if _cache_cleared:
+                _cache_msg = f"\n\nDa xoa cache cu: {', '.join(_cache_cleared[:5])}"
+                if len(_cache_cleared) > 5:
+                    _cache_msg += f" va {len(_cache_cleared)-5} muc khac"
 
             messagebox.showinfo(
                 "Cap nhat thanh cong!",
-                f"Da cap nhat len v{new_ver}!\n\nApp se tu khoi dong lai ngay bay gio.")
+                f"Da cap nhat len v{new_ver}!{_cache_msg}\n\n"
+                "App se tu khoi dong lai ngay bay gio.")
 
             # Restart app
             import subprocess as _sp, sys as _sys
@@ -2143,6 +2206,15 @@ class App(tk.Tk):
         super().__init__()
         self._login_msg = login_msg
         self._username  = username
+
+        # FIX: Tu xoa cache rac 1 lan khi update len v3.17.
+        # Vi sao: khach v3.16 update len v3.17 -> chay code update CUA v3.16 (cu),
+        # khong co logic xoa cache moi. Cache rac (ref_text Whisper sai luu vinh vien)
+        # van con -> voice clone van loi.
+        # Giai phap: chay xoa cache ngay khi App khoi dong, dung flag file de chi
+        # chay 1 LAN duy nhat sau update.
+        self._auto_clear_legacy_cache_once()
+
         self.title(f"MagicVoice TTS Studio  v{CURRENT_VERSION}")
         # Set icon: taskbar + title bar + Alt+Tab
         try:
@@ -3811,6 +3883,89 @@ class App(tk.Tk):
         except Exception:
             pass
 
+    def _auto_clear_legacy_cache_once(self):
+        """Tu xoa cache rac 1 LAN duy nhat sau update.
+        Dung flag file .cache_cleared_v317 de chi chay 1 lan.
+        Cac cache xoa:
+          1. __pycache__/ - bytecode Python cu
+          2. .deps_installed - flag check pip
+          3. *_trim*.wav - ref_audio cache cu
+          4. ref_text RAC trong voices_library.json (placeholder cu)
+        Voi voice clone: chi reset ref_text NGHI LA RAC, khong dung voice nao.
+        """
+        try:
+            from pathlib import Path as _P
+            import shutil as _sh
+            _script_dir = _P(__file__).parent
+            _flag = _script_dir / ".cache_cleared_v317"
+            # Da chay roi -> bo qua
+            if _flag.exists():
+                return
+
+            _cleared = []
+            # 1. __pycache__
+            try:
+                _pc = _script_dir / "__pycache__"
+                if _pc.exists():
+                    _sh.rmtree(str(_pc), ignore_errors=True)
+                    _cleared.append("__pycache__")
+            except Exception: pass
+
+            # 2. .deps_installed
+            try:
+                _df = _script_dir / ".deps_installed"
+                if _df.exists():
+                    _df.unlink()
+                    _cleared.append(".deps_installed")
+            except Exception: pass
+
+            # 3. _trim*.wav cache
+            try:
+                for _tf in _script_dir.rglob("*_trim*.wav"):
+                    try:
+                        _tf.unlink()
+                        _cleared.append(_tf.name)
+                    except Exception: pass
+            except Exception: pass
+
+            # 4. ref_text RAC trong voices_library.json (NGUYEN NHAN CHINH)
+            try:
+                import json as _jc
+                _vf = _script_dir / "voices_library.json"
+                if _vf.exists():
+                    _data = _jc.loads(_vf.read_text(encoding="utf-8"))
+                    _reset_count = 0
+                    for _v in _data:
+                        if _v.get("ref_audio") and _v.get("ref_text"):
+                            _old_ref = _v.get("ref_text", "")
+                            _is_garbage = (
+                                "Xin chào, đây là giọng đọc mẫu" in _old_ref
+                                or "This is a sample voice recording" in _old_ref
+                                or "Đây là đoạn ghi âm giọng" in _old_ref
+                                or "dùng làm tham chiếu" in _old_ref
+                                or len(_old_ref.strip()) < 10
+                            )
+                            if _is_garbage:
+                                _v["ref_text"] = ""
+                                _reset_count += 1
+                    if _reset_count > 0:
+                        _vf.write_text(
+                            _jc.dumps(_data, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+                        _cleared.append(f"reset {_reset_count} voice ref_text rac")
+            except Exception as _ve:
+                print(f"[AutoClearCache] Loi reset ref_text: {_ve}")
+
+            # Tao flag file de khong chay lai
+            try:
+                _flag.write_text(f"v3.17 cleared: {', '.join(_cleared)}", encoding="utf-8")
+            except Exception: pass
+
+            if _cleared:
+                print(f"[AutoClearCache] Da xoa: {', '.join(_cleared)}")
+        except Exception as _e:
+            print(f"[AutoClearCache] Loi: {_e}")
+
     def _init_network_mode(self):
         """Kiem tra mang ngay khi khoi dong, set env vars va socket timeout."""
         import os as _os, socket as _sock, time as _t
@@ -4666,39 +4821,27 @@ class App(tk.Tk):
             if vp.ref_text:
                 kw["ref_text"] = vp.ref_text
             else:
-                # Auto-transcribe TRUOC khi vao omnivoice
+                # Auto-transcribe TRUOC khi vao omnivoice (cho UI feedback)
                 _auto_text = self._auto_transcribe_ref(kw["ref_audio"], vp)
                 if _auto_text:
                     kw["ref_text"] = _auto_text
                     self._log(f"  📝 Auto-transcribe ref: \"{_auto_text[:60]}...\"", "info")
                 else:
-                    # FIX v3.9: KHONG raise loi nua. Thay vao do dung placeholder
-                    # PHU HOP NGON NGU (detect qua ten voice/instruct/text dau vao).
-                    # Voice cu khong co ref_text van chay duoc, khach khong bi block.
-                    # Detect ngon ngu:
-                    _hint = (vp.name or "") + " " + (vp.instruct or "")
-                    _hint_lower = _hint.lower()
-                    # Co tu tieng Anh hoac ten kieu English -> placeholder English
-                    is_english = any(w in _hint_lower for w in [
-                        "english","anh","us","uk","american","british",
-                        "iran","john","jane","mike","tom","jenny","emma",
-                        "narrator","voice","male","female","young","old"
-                    ])
-                    # Mac dinh: tieng Viet (vi MagicVoice chu yeu khach Viet)
-                    if is_english:
-                        placeholder = ("This is a sample voice recording for "
-                                       "reference, used to clone the speaker's tone.")
-                    else:
-                        placeholder = ("Đây là đoạn ghi âm giọng nói mẫu, "
-                                       "dùng làm tham chiếu cho việc nhân bản giọng.")
-                    kw["ref_text"] = placeholder
+                    # FIX (theo doc OmniVoice github.com/k2-fsa/OmniVoice):
+                    # Neu khong transcribe duoc, KHONG truyen ref_text (omit).
+                    # OmniVoice se TU DONG dung Whisper noi bo de transcribe.
+                    # Doc goc: "If you don't want to input ref_text manually,
+                    # you can directly omit the ref_text. The model will use
+                    # Whisper ASR to auto-transcribe it."
+                    # Truoc day mình truyen placeholder text -> model "clone"
+                    # theo placeholder -> giong hong, doc lung tung.
                     self._log(
-                        f"  ⚠ Khong transcribe duoc audio mau. Dung placeholder "
-                        f"({'EN' if is_english else 'VI'}) - clone se khong toi uu.\n"
+                        f"  ⚠ Local transcribe fail - de OmniVoice tu Whisper noi bo.\n"
                         f"     De clone CHINH XAC nhat: vao Clone Voice -> Sua "
                         f"voice '{vp.name}' -> nhap noi dung audio mau (ref_text) "
                         f"chinh xac cau ma audio dang doc.",
                         "warn")
+                    # Khong gan kw["ref_text"] -> omit -> omnivoice tu xu ly
         elif vp.mode == "design":
             if not vp.instruct:
                 raise ValueError("Voice Design thiếu mô tả!")
@@ -5123,68 +5266,15 @@ class App(tk.Tk):
                 if self.cancel_ev.is_set():
                     self._log(f"⏹ Đã hủy chunk {ci+1}", "warn"); return
 
-                # FIX v3.22: Detect hallucination chinh xac hon.
-                # Cach cu (so ms/tu voi threshold) khong hieu qua vi 1 tu thua
-                # FIX v3.9: Chong hallucination "tu them tu" trong clone voice.
-                # Diffusion model (F5/OmniVoice) doi khi tu them/lap tu ngau nhien.
-                # Gen 3 LAN voi 3 seed khac nhau, lay ban co do dai gan EXPECTED nhat.
-                # Expected = n_words * 220ms (toc do trung binh).
-                # Ban "binh thuong" co do dai gan expected, ban "hallucinate" se dai hon nhieu.
-                n_words_chunk = max(len(chunk_txt.split()), 1)
-                MIN_WORDS_FOR_RETRY = 4
-                EXPECTED_MS_PER_WORD = 220   # ~220ms/tu o speed 1.0
-                expected_samples = int(n_words_chunk * EXPECTED_MS_PER_WORD * SR / 1000 / max(speed, 0.5))
-
-                candidates = []   # list of (audio_tensor, deviation_from_expected)
-
-                # Gen lan 1 voi seed mac dinh
+                # FIX: Gen 1 lan don gian nhu v3.5.
+                # Truoc day mình gen 3 lan voi seed khac va chon ban "deviation thap nhat"
+                # so voi expected = n_words * 220ms. Logic do co loi:
+                #   - Voice clone giong cham (280ms/tu) -> moi ban deu lech expected
+                #   - Bản BO TU thuong NGAN HON expected -> deviation NHO -> bi chon
+                #   - Ket qua: chon nham ban bo tu lam ket qua chinh thuc!
+                # Theo doc OmniVoice, model gen 1 lan voi guidance_scale=2.0 da on dinh.
                 a = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                audio_v1 = _to_tensor(a)
-                if audio_v1 is not None and audio_v1.abs().max() >= 0.0001:
-                    dev = abs(audio_v1.shape[1] - expected_samples)
-                    candidates.append((audio_v1, dev, 42))
-
-                # Neu chunk du dai -> gen them 2 lan voi seed khac
-                if (n_words_chunk >= MIN_WORDS_FOR_RETRY
-                    and candidates
-                    and not self.cancel_ev.is_set()):
-                    for _retry_idx in range(2):
-                        if self.cancel_ev.is_set(): break
-                        try:
-                            new_seed = 42 + (_retry_idx + 1) * 1337 + ci * 7
-                            Backend.set_seed(new_seed)
-                            a_retry = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                            audio_retry = _to_tensor(a_retry)
-                            if audio_retry is not None and audio_retry.abs().max() >= 0.0001:
-                                dev = abs(audio_retry.shape[1] - expected_samples)
-                                candidates.append((audio_retry, dev, new_seed))
-                        except Exception:
-                            pass
-                    Backend.set_seed(42)  # reset ve mac dinh
-
-                # Chon ban co deviation thap nhat (gan expected nhat)
-                if candidates:
-                    candidates.sort(key=lambda x: x[1])
-                    audio_t, best_dev, best_seed = candidates[0]
-                    # Log neu co retry va chon ban khac mac dinh
-                    if len(candidates) > 1:
-                        all_dur = [f"{c[0].shape[1]/SR:.1f}s" for c in candidates]
-                        all_dev_pct = [c[1]/expected_samples*100 for c in candidates]
-                        # Neu deviation cua ban tot nhat van > 50% -> log canh bao
-                        best_pct = best_dev / expected_samples * 100
-                        if best_pct > 50:
-                            self._log(
-                                f"  ⚠ Chunk {ci+1}: 3 lan gen ra {all_dur}, "
-                                f"chon seed {best_seed} (lech {best_pct:.0f}% so voi expected)",
-                                "warn")
-                        else:
-                            # Bo log de tranh spam, chi log khi co retry thanh cong
-                            if candidates[0][2] != 42:
-                                self._log(
-                                    f"  ↻ Chunk {ci+1}: dung seed {best_seed} ({best_dev/SR:.1f}s deviation)",
-                                    "info")
-                else:
-                    audio_t = audio_v1   # fallback
+                audio_t = _to_tensor(a)
 
                 elapsed = time.time() - t0
 
