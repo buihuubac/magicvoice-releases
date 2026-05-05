@@ -9,6 +9,30 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading, os, sys, re, time, json, subprocess, shutil
 from pathlib import Path
 
+# ── FIX (v3.18): Loi 'charmap' codec can't encode character '\u1eaf' (chu "ắ") ──
+# Nguyen nhan: tren Windows, pythonw.exe (chay an console qua MagicVoice.vbs)
+# co sys.stdout/stderr dung encoding cp1252 (charmap). Khi thu vien ben duoi
+# (omnivoice, transformers, torchaudio, ...) print text tieng Viet co dau ->
+# crash voi UnicodeEncodeError.
+# Fix: ep stdout/stderr ve UTF-8 NGAY khi import, truoc khi bat ky thu vien
+# nao co the print. Cung set PYTHONIOENCODING cho subprocess con ke thua.
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
+for _stream_name in ("stdout", "stderr"):
+    _s = getattr(sys, _stream_name, None)
+    if _s is not None and hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    elif _s is None:
+        # pythonw.exe: stdout/stderr = None -> gan dummy de print() khong crash
+        try:
+            import io as _io
+            setattr(sys, _stream_name, _io.StringIO())
+        except Exception:
+            pass
+
 # ── Patch torchaudio.load để tránh lỗi TorchCodec trên các máy chưa cài ──
 def _patch_torchaudio():
     try:
@@ -3885,7 +3909,7 @@ class App(tk.Tk):
 
     def _auto_clear_legacy_cache_once(self):
         """Tu xoa cache rac 1 LAN duy nhat sau update.
-        Dung flag file .cache_cleared_v317 de chi chay 1 lan.
+        Dung flag file .cache_cleared_v318 de chi chay 1 lan.
         Cac cache xoa:
           1. __pycache__/ - bytecode Python cu
           2. .deps_installed - flag check pip
@@ -3897,7 +3921,7 @@ class App(tk.Tk):
             from pathlib import Path as _P
             import shutil as _sh
             _script_dir = _P(__file__).parent
-            _flag = _script_dir / ".cache_cleared_v317"
+            _flag = _script_dir / ".cache_cleared_v318"
             # Da chay roi -> bo qua
             if _flag.exists():
                 return
@@ -3958,7 +3982,7 @@ class App(tk.Tk):
 
             # Tao flag file de khong chay lai
             try:
-                _flag.write_text(f"v3.17 cleared: {', '.join(_cleared)}", encoding="utf-8")
+                _flag.write_text(f"v3.18 cleared: {', '.join(_cleared)}", encoding="utf-8")
             except Exception: pass
 
             if _cleared:
@@ -5280,19 +5304,7 @@ class App(tk.Tk):
                     continue
                 self._log(f"  [{ci+1}/{total}] {elapsed:.1f}s | {chunk_txt[:40]}", "info")
 
-                # FIX: Trim silence dau/cuoi + DC offset + fade -> chong giat/pop khi noi
-                # 1. Loai DC offset (cho moi chunk co the lech khac nhau)
-                audio_t = audio_t - audio_t.mean()
-                # 2. Trim silence dau/cuoi de loai khoang lang du thua
-                #    (Edge TTS tu lam, MagicVoice phai lam thu cong)
-                audio_t = _trim_silence(audio_t, sr=SR, threshold=0.005, pad_ms=30)
-                # 3. Fade in/out 8ms de tranh click/pop o cho noi
-                _fade_n = int(0.008 * SR)  # 8ms
-                if audio_t.shape[1] > _fade_n * 2:
-                    _fade = torch.linspace(0., 1., _fade_n)
-                    audio_t[0, :_fade_n] *= _fade
-                    audio_t[0, -_fade_n:] *= _fade.flip(0)
-                parts.append(audio_t)
+                parts.append(audio_t)  # no trim - avoid cutting speech
                 # Thêm im lặng giữa các chunk
                 if pause_ms > 0:
                     parts.append(torch.zeros(1, int(pause_ms * SR / 1000)))
@@ -7237,13 +7249,13 @@ if __name__ == "__main__":
         c.create_oval(280,-40,520,200,fill="#0d1535",outline="")
         c.create_text(220,70,text="MV",font=("Segoe UI",36,"bold"),fill="#6c63ff")
         c.create_text(220,118,text="MagicVoice TTS Studio",font=("Segoe UI",14,"bold"),fill="#e8eaf6")
-        c.create_text(220,142,text="Dang nhap de su dung",font=("Segoe UI",9),fill="#6b7280")
+        c.create_text(220,142,text="Đăng nhập để sử dụng",font=("Segoe UI",9),fill="#6b7280")
         c.create_line(60,165,380,165,fill="#2d3154",width=1)
 
         frm = _tk.Frame(c,bg="#1a1d2e")
         c.create_window(220,285,window=frm,width=360,height=230)
 
-        _tk.Label(frm,text="Ten tai khoan",font=("Segoe UI",8,"bold"),bg="#1a1d2e",fg="#9094b8",anchor="w").pack(fill="x",padx=20,pady=(16,2))
+        _tk.Label(frm,text="Tên tài khoản",font=("Segoe UI",8,"bold"),bg="#1a1d2e",fg="#9094b8",anchor="w").pack(fill="x",padx=20,pady=(16,2))
         uv = _tk.StringVar(value=su)
         uf = _tk.Frame(frm,bg="#252845",highlightthickness=1,highlightbackground="#2d3154")
         uf.pack(fill="x",padx=20)
@@ -7251,7 +7263,7 @@ if __name__ == "__main__":
         ue = _tk.Entry(uf,textvariable=uv,font=("Segoe UI",11),bg="#252845",fg="#e8eaf6",insertbackground="#6c63ff",relief="flat",bd=0)
         ue.pack(side="left",fill="x",expand=True,ipady=10,pady=2)
 
-        _tk.Label(frm,text="Mat khau",font=("Segoe UI",8,"bold"),bg="#1a1d2e",fg="#9094b8",anchor="w").pack(fill="x",padx=20,pady=(10,2))
+        _tk.Label(frm,text="Mật khẩu",font=("Segoe UI",8,"bold"),bg="#1a1d2e",fg="#9094b8",anchor="w").pack(fill="x",padx=20,pady=(10,2))
         pv = _tk.StringVar(value=sp)
         pf = _tk.Frame(frm,bg="#252845",highlightthickness=1,highlightbackground="#2d3154")
         pf.pack(fill="x",padx=20)
@@ -7262,7 +7274,7 @@ if __name__ == "__main__":
         rv = _tk.BooleanVar(value=sr)
         rf = _tk.Frame(frm,bg="#1a1d2e")
         rf.pack(fill="x",padx=20,pady=(8,0))
-        _tk.Checkbutton(rf,text="Ghi nho tai khoan",variable=rv,font=("Segoe UI",9),bg="#1a1d2e",fg="#9094b8",activebackground="#1a1d2e",selectcolor="#252845",cursor="hand2").pack(side="left")
+        _tk.Checkbutton(rf,text="Ghi nhớ tài khoản",variable=rv,font=("Segoe UI",9),bg="#1a1d2e",fg="#9094b8",activebackground="#1a1d2e",selectcolor="#252845",cursor="hand2").pack(side="left")
 
         mv = _tk.StringVar()
         ml = _tk.Label(c,textvariable=mv,font=("Segoe UI",9),bg="#0f1117",fg="#ef4444",wraplength=360)
@@ -7270,35 +7282,42 @@ if __name__ == "__main__":
 
         def login(e=None):
             u=uv.get().strip(); p=pv.get().strip()
-            if not u or not p: mv.set("Nhap day du thong tin!"); return
-            btn.config(text="Dang kiem tra...",state="disabled",bg="#3d3888")
+            if not u or not p: mv.set("Nhập đầy đủ thông tin!"); return
+            btn.config(text="Đang kiểm tra...",state="disabled",bg="#3d3888")
             mv.set(""); win.update()
             try:
                 from auth_manager import verify_login, verify_login_offline
-                import socket as _sock
 
-                # Kiem tra co mang khong
-                def _has_internet():
-                    try:
-                        _sock.setdefaulttimeout(1)  # 1s: fail nhanh, giai phong lock som
-                        _sock.socket().connect(("8.8.8.8", 53))
-                        return True
-                    except: return False
-
-                if _has_internet():
-                    r, m = verify_login(u, p)
-                    is_offline = False
-                else:
-                    # Mat mang - dung cache offline
-                    r, m = verify_login_offline(u, p)
-                    is_offline = True
+                # FIX (v3.18): KHONG check internet bang socket connect 8.8.8.8:53.
+                # Ly do: cach do bi false negative tren may khach co:
+                #   - Firewall/Antivirus (Kaspersky, Bitdefender, ...) chan
+                #     outbound port 53 den IP la
+                #   - VPN dang bat -> chan DNS truc tiep
+                #   - Mang cham -> timeout 1s khong du
+                #   - Captive portal wifi chua login
+                # -> _has_internet() return False -> di luon vao offline
+                # -> bao "Chua co cache offline" DU MAY CO MANG.
+                #
+                # Cach moi: GOI LUON API server. verify_login() da co timeout
+                # 8/20/30s va retry 3 lan. Neu fail mang thuc su -> fallback
+                # offline. Logic moi handle dung ca 4 case tren.
+                r, m = verify_login(u, p)
+                is_offline = False
+                # Neu API fail va co the la do mang/server -> thu offline
+                if not r and ("kết nối" in m.lower() or "kết nối" in m.lower()
+                              or "ket noi" in m.lower() or "timeout" in m.lower()
+                              or "connection" in m.lower()):
+                    r_off, m_off = verify_login_offline(u, p)
+                    if r_off:
+                        r, m = r_off, m_off
+                        is_offline = True
 
                 if r:
                     ok[0] = True
                     ok[1] = m
                     if rv.get(): _save(u,p)
                     else: _clear()
-                    btn.config(text="Thanh cong!", bg="#00d68f")
+                    btn.config(text="Thành công!", bg="#00d68f")
                     mv.set(m); ml.config(fg="#00d68f")
                     win.after(700, win.quit)
                 else:
@@ -7310,27 +7329,27 @@ if __name__ == "__main__":
                             ok[1] = m2
                             if rv.get(): _save(u,p)
                             else: _clear()
-                            btn.config(text="Thanh cong!", bg="#00d68f")
+                            btn.config(text="Thành công!", bg="#00d68f")
                             mv.set(m2); ml.config(fg="#00d68f")
                             win.after(700, win.quit)
                             return
-                    btn.config(text="Dang Nhap", state="normal", bg="#6c63ff")
+                    btn.config(text="Đăng Nhập", state="normal", bg="#6c63ff")
                     mv.set(m); ml.config(fg="#ef4444")
             except Exception as _ex:
-                btn.config(text="Dang Nhap", state="normal", bg="#6c63ff")
-                mv.set("Loi ket noi! " + str(_ex)[:60]); ml.config(fg="#ef4444")
+                btn.config(text="Đăng Nhập", state="normal", bg="#6c63ff")
+                mv.set("Lỗi kết nối! " + str(_ex)[:60]); ml.config(fg="#ef4444")
 
-        btn = _tk.Button(c,text="Dang Nhap",command=login,font=("Segoe UI",12,"bold"),bg="#6c63ff",fg="white",relief="flat",cursor="hand2",activebackground="#8b85ff")
+        btn = _tk.Button(c,text="Đăng Nhập",command=login,font=("Segoe UI",12,"bold"),bg="#6c63ff",fg="white",relief="flat",cursor="hand2",activebackground="#8b85ff")
         c.create_window(220,405,window=btn,width=360,height=44)
 
         c.create_line(60,460,380,460,fill="#1e2135",width=1)
-        c.create_text(220,478,text="Lien he - Zalo: 0985 483 623",font=("Segoe UI",9,"bold"),fill="#00b4d8")
+        c.create_text(220,478,text="Liên hệ - Zalo: 0985 483 623",font=("Segoe UI",9,"bold"),fill="#00b4d8")
         def zalo():
             import webbrowser; webbrowser.open("https://zalo.me/g/bqroiqc6wbcpph3s6sdd")
-        bz = _tk.Button(c,text="📲  Tham Gia Nhom Zalo",command=zalo,font=("Segoe UI",9,"bold"),bg="#0068ff",fg="white",relief="flat",cursor="hand2")
+        bz = _tk.Button(c,text="📲  Tham Gia Nhóm Zalo",command=zalo,font=("Segoe UI",9,"bold"),bg="#0068ff",fg="white",relief="flat",cursor="hand2")
         c.create_window(220,510,window=bz,width=240,height=32)
 
-        c.create_text(220,548,text="🎁 Dung thu? Lien he Zalo de duoc ho tro",font=("Segoe UI",8),fill="#6b7280")
+        c.create_text(220,548,text="🎁 Dùng thử? Liên hệ Zalo để được hỗ trợ",font=("Segoe UI",8),fill="#6b7280")
 
         win.protocol("WM_DELETE_WINDOW",win.destroy)
         win.bind("<Return>",login)
