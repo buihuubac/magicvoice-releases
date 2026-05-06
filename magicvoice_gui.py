@@ -5296,7 +5296,7 @@ class App(tk.Tk):
                 #   - Ket qua: chon nham ban bo tu lam ket qua chinh thuc!
                 # Theo doc OmniVoice, model gen 1 lan voi guidance_scale=2.0 da on dinh.
                 a = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                audio_t = a[0] if hasattr(a, '__getitem__') else a
+                audio_t = _to_tensor(a)
 
                 elapsed = time.time() - t0
 
@@ -5521,7 +5521,7 @@ class App(tk.Tk):
                             a = Backend.gen(para, **kw,
                                             num_step=self.steps_var.get(),
                                             speed=self._get_speed())
-                            tensor = a[0] if hasattr(a, '__getitem__') else a
+                            tensor = _to_tensor(a)
                             if tensor is not None and tensor.abs().max() > 0.0001:
                                 parts.append(tensor)
                                 if pi < total - 1:
@@ -5928,7 +5928,7 @@ class App(tk.Tk):
                                 a = Backend.gen(chunk,
                                     num_step=self.steps_var.get(),
                                     speed=spd, **kw)
-                                t = a[0] if hasattr(a, '__getitem__') else a
+                                t = _to_tensor(a)
                                 if hasattr(self,"post_proc_var") and self.post_proc_var.get():
                                     t = _post_process(t, SR)
                                 tensors.append(t)
@@ -6031,7 +6031,7 @@ class App(tk.Tk):
                         a = Backend.gen(txt,
                                         num_step=self.steps_var.get(),
                                         speed=self._get_speed(), **kw)
-                        audio_t = a[0] if hasattr(a, '__getitem__') else a
+                        audio_t = _to_tensor(a)
                         all_parts.append(audio_t)  # 1 entry = 1 part
                         tensors.append(audio_t)
                         tensors.append(silence)
@@ -6453,7 +6453,7 @@ class App(tk.Tk):
                 continue
             try:
                 a = Backend.gen(txt, num_step=steps, speed=speed, **kw)
-                t = a[0] if hasattr(a, '__getitem__') else a
+                t = _to_tensor(a)
                 if t is None or t.abs().max() < 0.0001:
                     skip += 1; continue
                 # Luu vao ca 2 list
@@ -6538,7 +6538,7 @@ class App(tk.Tk):
                             skipped += 1; continue
                         a=Backend.gen(preprocess_text(txt),num_step=self.steps_var.get(),
                                        speed=self._get_speed(),**kw)
-                        tensor = a[0] if hasattr(a, '__getitem__') else a
+                        tensor = _to_tensor(a)
 
                     if tensor is None or tensor.abs().max() < 0.0001:
                         self._log("  ⚠ Audio rỗng", "warn")
