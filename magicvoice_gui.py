@@ -5005,7 +5005,8 @@ class App(tk.Tk):
         try:
             import torchaudio, torch
             from pathlib import Path as _P
-            MAX_SEC = 90   # Truoc: 30s -> qua ngan, mat phong cach giong
+            MAX_SEC = 30   # FIX v3.19: ve lai 30s nhu v2.8. 90s qua dai
+                           # khien model "lo loc" tu trong ref audio sang output
             t, sr = _safe_audio_load(audio_path)
             dur = t.shape[1] / sr
             # Khong cat neu trong gioi han -> giu nguyen chat luong clone
@@ -5014,7 +5015,7 @@ class App(tk.Tk):
             # Cat khi qua dai (tranh OOM)
             max_samples = int(MAX_SEC * sr)
             t_trim = t[:, :max_samples]
-            cache = str(_P(audio_path).with_suffix("")) + "_trim90s.wav"
+            cache = str(_P(audio_path).with_suffix("")) + "_trim30s.wav"
             torchaudio.save(cache, t_trim, sr)
             self._log(f"  ✂ Trim ref audio: {dur:.1f}s → {MAX_SEC}s (qua dai)", "info")
             return cache
@@ -5295,7 +5296,7 @@ class App(tk.Tk):
                 #   - Ket qua: chon nham ban bo tu lam ket qua chinh thuc!
                 # Theo doc OmniVoice, model gen 1 lan voi guidance_scale=2.0 da on dinh.
                 a = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                audio_t = _to_tensor(a)
+                audio_t = a[0] if hasattr(a, '__getitem__') else a
 
                 elapsed = time.time() - t0
 
@@ -5520,7 +5521,7 @@ class App(tk.Tk):
                             a = Backend.gen(para, **kw,
                                             num_step=self.steps_var.get(),
                                             speed=self._get_speed())
-                            tensor = _to_tensor(a)
+                            tensor = a[0] if hasattr(a, '__getitem__') else a
                             if tensor is not None and tensor.abs().max() > 0.0001:
                                 parts.append(tensor)
                                 if pi < total - 1:
@@ -5927,7 +5928,7 @@ class App(tk.Tk):
                                 a = Backend.gen(chunk,
                                     num_step=self.steps_var.get(),
                                     speed=spd, **kw)
-                                t = _to_tensor(a)
+                                t = a[0] if hasattr(a, '__getitem__') else a
                                 if hasattr(self,"post_proc_var") and self.post_proc_var.get():
                                     t = _post_process(t, SR)
                                 tensors.append(t)
@@ -6030,7 +6031,7 @@ class App(tk.Tk):
                         a = Backend.gen(txt,
                                         num_step=self.steps_var.get(),
                                         speed=self._get_speed(), **kw)
-                        audio_t = _to_tensor(a)
+                        audio_t = a[0] if hasattr(a, '__getitem__') else a
                         all_parts.append(audio_t)  # 1 entry = 1 part
                         tensors.append(audio_t)
                         tensors.append(silence)
@@ -6452,7 +6453,7 @@ class App(tk.Tk):
                 continue
             try:
                 a = Backend.gen(txt, num_step=steps, speed=speed, **kw)
-                t = _to_tensor(a)
+                t = a[0] if hasattr(a, '__getitem__') else a
                 if t is None or t.abs().max() < 0.0001:
                     skip += 1; continue
                 # Luu vao ca 2 list
@@ -6537,7 +6538,7 @@ class App(tk.Tk):
                             skipped += 1; continue
                         a=Backend.gen(preprocess_text(txt),num_step=self.steps_var.get(),
                                        speed=self._get_speed(),**kw)
-                        tensor = _to_tensor(a)
+                        tensor = a[0] if hasattr(a, '__getitem__') else a
 
                     if tensor is None or tensor.abs().max() < 0.0001:
                         self._log("  ⚠ Audio rỗng", "warn")
