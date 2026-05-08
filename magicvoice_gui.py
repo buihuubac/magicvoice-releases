@@ -4663,18 +4663,18 @@ class App(tk.Tk):
     # v3.22: SINGLE-SESSION HEARTBEAT
     # ════════════════════════════════════════════════════════════
     def _start_heartbeat_thread(self):
-        """Bat dau thread kiem tra session 2 phut/lan.
+        """v3.3: Bat dau thread kiem tra session 5 giay/lan -> kick gan nhu real-time.
         Neu server bao kicked -> tool tu logout + dong app.
-        Grace 3 lan fail lien tiep truoc khi kick (tranh kick oan khi mang yeu)."""
+        Grace 3 lan fail lien tiep (15s) truoc khi cho la mang loi (van khong kick)."""
         if not self._username:
             return  # Khong co username -> bo qua
         import threading
         def _hb_loop():
             import time
-            HEARTBEAT_INTERVAL = 120  # 2 phut
-            MAX_FAIL = 3              # cho phep 3 lan fail truoc khi kick
+            HEARTBEAT_INTERVAL = 5    # v3.3: 5 giay (cu: 120s)
+            MAX_FAIL = 3              # 3 lan fail = 15s mang die -> log canh bao, KHONG kick
             while not self._heartbeat_stop:
-                # Doi 2 phut moi lan check (chia nho de stop nhanh khi close app)
+                # Doi N giay (chia nho de stop nhanh khi close app)
                 for _ in range(HEARTBEAT_INTERVAL):
                     if self._heartbeat_stop:
                         return
@@ -4685,9 +4685,9 @@ class App(tk.Tk):
                     from auth_manager import check_session_alive, get_session_token
                     token = get_session_token(self._username)
                     if not token:
-                        # Khong co token (account legacy hoac da bi xoa cache) -> bo qua
                         continue
-                    status, msg = check_session_alive(self._username, token, timeout=8)
+                    # Timeout 4s (ngan hon interval 5s de tranh stack request)
+                    status, msg = check_session_alive(self._username, token, timeout=4)
                     if status == "kicked":
                         # Bi day ra -> kick UI (chay tren main thread)
                         self.after(0, lambda m=msg: self._kick_user_out(m))
@@ -4698,7 +4698,7 @@ class App(tk.Tk):
                         if self._heartbeat_fail_count >= MAX_FAIL:
                             try:
                                 self.after(0, lambda: self._log(
-                                    f"⚠ Khong ket noi server qua {MAX_FAIL*2} phut", "warn"))
+                                    f"⚠ Mat ket noi server (3 lan)", "warn"))
                             except Exception:
                                 pass
                             self._heartbeat_fail_count = 0  # reset de khong spam
