@@ -1876,6 +1876,12 @@ class VoiceBrowserDialog(tk.Toplevel):
 #   }
 _UPDATE_DEFAULT_URL  = "https://magicvoice-update-1.onrender.com/download/magicvoice_gui.py"
 _UPDATE_DEFAULT_VER  = "https://magicvoice-update-1.onrender.com/version"
+# v3.22.1: Default extra_files (fallback khi update_config.json khong khai bao)
+# -> Dam bao auth_manager.py + license_guard.py luon duoc tai cung khi update
+_UPDATE_DEFAULT_EXTRA = {
+    "auth_manager.py":  "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/auth_manager.py",
+    "license_guard.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/license_guard.py",
+}
 
 def _load_update_config():
     """Doc update_config.json neu co. Tra ve (download_url, version_url, extra_files).
@@ -1904,6 +1910,11 @@ def _load_update_config():
                         safe_name = Path(k).name
                         if safe_name == k and not k.startswith("."):
                             extra[safe_name] = v.strip()
+            # v3.22.1: Neu config khong co extra_files HOAC thieu file quan trong
+            # -> bo sung tu default (dam bao auth_manager.py luon duoc tai)
+            for _fname, _furl in _UPDATE_DEFAULT_EXTRA.items():
+                if _fname not in extra:
+                    extra[_fname] = _furl
             if _du and _vu:
                 print(f"[Update] Dung URL tu update_config.json: {_vu}")
                 if extra:
@@ -1911,7 +1922,8 @@ def _load_update_config():
                 return _du, _vu, extra
     except Exception as _e:
         print(f"[Update] Loi doc update_config.json: {_e}")
-    return _UPDATE_DEFAULT_URL, _UPDATE_DEFAULT_VER, {}
+    # Khong co config local hoac loi -> dung default (CO extra_files default)
+    return _UPDATE_DEFAULT_URL, _UPDATE_DEFAULT_VER, dict(_UPDATE_DEFAULT_EXTRA)
 
 UPDATE_URL, VERSION_URL, UPDATE_EXTRA_FILES = _load_update_config()
 
