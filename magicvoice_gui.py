@@ -4663,31 +4663,62 @@ class App(tk.Tk):
     # v3.22: SINGLE-SESSION HEARTBEAT
     # ════════════════════════════════════════════════════════════
     def _start_heartbeat_thread(self):
-        """Bat dau thread kiem tra session 2 phut/lan.
+        """Bat dau thread kiem tra session 30s/lan (v3.22.3 - debug version).
         Neu server bao kicked -> tool tu logout + dong app.
-        Grace 3 lan fail lien tiep truoc khi kick (tranh kick oan khi mang yeu)."""
+        Grace 3 lan fail lien tiep truoc khi kick (tranh kick oan khi mang yeu).
+        v3.22.3: Them log chi tiet de debug + giam interval 120s -> 30s."""
+        # v3.22.3: Log ngay khi vao function (du _username co rong hay khong)
+        try:
+            self._log(f"🔄 [HB] Heartbeat init - username='{self._username}'", "info")
+        except Exception:
+            pass
         if not self._username:
+            try:
+                self._log("⚠ [HB] Khong co username -> heartbeat tat", "warn")
+            except Exception:
+                pass
             return  # Khong co username -> bo qua
         import threading
         def _hb_loop():
             import time
-            HEARTBEAT_INTERVAL = 120  # 2 phut
+            HEARTBEAT_INTERVAL = 30   # v3.22.3: 30s de debug nhanh (cu: 120s)
             MAX_FAIL = 3              # cho phep 3 lan fail truoc khi kick
+            try:
+                self.after(0, lambda: self._log(
+                    f"🟢 [HB] Thread started - check moi {HEARTBEAT_INTERVAL}s", "ok"))
+            except Exception:
+                pass
+            _check_count = 0
             while not self._heartbeat_stop:
-                # Doi 2 phut moi lan check (chia nho de stop nhanh khi close app)
+                # Doi N giay moi lan check (chia nho de stop nhanh khi close app)
                 for _ in range(HEARTBEAT_INTERVAL):
                     if self._heartbeat_stop:
                         return
                     time.sleep(1)
                 if self._heartbeat_stop:
                     return
+                _check_count += 1
                 try:
                     from auth_manager import check_session_alive, get_session_token
                     token = get_session_token(self._username)
+                    # v3.22.3: log moi lan check
+                    _short_token = token[:8] + "..." if token else "EMPTY"
+                    try:
+                        self.after(0, lambda c=_check_count, t=_short_token: self._log(
+                            f"🔄 [HB #{c}] Checking token={t}", "info"))
+                    except Exception:
+                        pass
                     if not token:
                         # Khong co token (account legacy hoac da bi xoa cache) -> bo qua
                         continue
                     status, msg = check_session_alive(self._username, token, timeout=8)
+                    # v3.22.3: log ket qua
+                    try:
+                        self.after(0, lambda s=status, m=msg: self._log(
+                            f"🔄 [HB] Server: status={s}, msg={m}",
+                            "ok" if s == "ok" else ("warn" if s == "error" else "err")))
+                    except Exception:
+                        pass
                     if status == "kicked":
                         # Bi day ra -> kick UI (chay tren main thread)
                         self.after(0, lambda m=msg: self._kick_user_out(m))
@@ -4696,19 +4727,22 @@ class App(tk.Tk):
                         # Loi mang/server -> tang counter, KHONG kick
                         self._heartbeat_fail_count += 1
                         if self._heartbeat_fail_count >= MAX_FAIL:
-                            # Mang die qua lau, log canh bao nhung khong kick
                             try:
                                 self.after(0, lambda: self._log(
-                                    f"⚠ Khong ket noi server qua {MAX_FAIL*2} phut", "warn"))
+                                    f"⚠ Khong ket noi server qua {MAX_FAIL} lan", "warn"))
                             except Exception:
                                 pass
                             self._heartbeat_fail_count = 0  # reset de khong spam
                     else:
                         # OK -> reset counter
                         self._heartbeat_fail_count = 0
-                except Exception:
-                    # Loi bat ngo -> KHONG kick
-                    pass
+                except Exception as _hb_e:
+                    # Loi bat ngo -> log nhung KHONG kick
+                    try:
+                        self.after(0, lambda e=_hb_e: self._log(
+                            f"❌ [HB] Loi: {type(e).__name__}: {str(e)[:100]}", "err"))
+                    except Exception:
+                        pass
         t = threading.Thread(target=_hb_loop, daemon=True)
         t.start()
 
