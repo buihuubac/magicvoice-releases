@@ -1,49 +1,46 @@
 """
-license_guard.py — Kiem tra license voi cache offline co ky HMAC.
+license_guard.py — Kiem tra license dua tren session_token cua auth_manager.
+v3.4: Bo Google Apps Script, dung /check_session cua Render server
+       -> Tu dong tuan theo logic slot 2 may single-active.
 
 Logic:
-  1. Kiem tra online truoc (Google Apps Script) → neu OK, luu cache 3 ngay.
-  2. Neu mang loi → dung cache offline (neu con hop le).
-  3. Neu server tu choi ro rang → xoa cache, tu choi ngay.
-  4. Clock tampering (tua gio) → invalidate cache.
-  5. Cache bind theo machine_id → copy cache sang may khac khong chay duoc.
+  1. Doc session_token tu auth_manager (file .session_token).
+  2. Goi /check_session de verify token con hop le.
+     - kicked=true -> may khac da login -> tu choi ngay.
+     - ok=true     -> luu cache 3 ngay.
+  3. Mat mang -> dung cache offline (neu con hop le).
+  4. Cache HMAC-signed, bind theo machine_id.
 
-Trang thai "fail-open" cua ban cu da duoc bo — bay gio tat ca exception
-khong xac dinh se tra ve (False, msg).
+Trang thai fail-CLOSED: khong xac dinh duoc -> tu choi.
 """
 from __future__ import annotations
-import os, sys, json, time, hmac, hashlib, base64
+import os, sys, json, time, hmac, hashlib
 from pathlib import Path
 
-# ══════════ OBFUSCATED CONSTANTS ══════════
-# Secret & URL duoc base64 encode de khong grep ra "mv_lic_2025" thang
-_SEC_ENC = b"bXZfbGljXzIwMjU="
-_URL_ENC = (b"aHR0cHM6Ly9zY3JpcHQuZ29vZ2xlLmNvbS9tYWNyb3Mvcy9BS2Z5Y2J4VE0w"
-            b"VWt3UDZWSm1iRkpFOWM2cHlQXy1QQmluc1ZQZS1wendhNWxndHNhRFVDNUNx"
-            b"a0pzam94SlljOTliLWJCY3UvZXhlYw==")
-
-def _sec() -> str:
-    return base64.b64decode(_SEC_ENC).decode("utf-8")
-
-def _url() -> str:
-    return base64.b64decode(_URL_ENC).decode("utf-8")
+# ══════════ ENDPOINTS ══════════
+_API_URL = "https://magicvoice-update-1.onrender.com"
+_API_KEY = "mv_secret_2025"
 
 # ══════════ CONFIG ══════════
 _CACHE_TTL_SEC     = 3 * 86400      # 3 ngay: offline toi da 3 ngay
 _SESSION_CACHE_SEC = 300            # 5 phut: cache RAM giam tai server
-_ONLINE_TIMEOUT    = 15             # 15s timeout khi goi server
+_ONLINE_TIMEOUT    = 8              # 8s timeout khi goi /check_session
 _CLOCK_FUTURE_OK   = 3600           # 1 gio tolerance cho clock
+
+# ══════════ SECRET cho HMAC cache (giu de cache cu van read duoc) ══════════
+_LIC_SECRET = "mv_lic_2025"
 
 # ══════════ MACHINE ID ══════════
 def _get_machine_id() -> str:
-    """Lay machine_id tu auth_manager (goi cung cach user hien tai dang lam)."""
+    """Lay machine_id tu auth_manager (cung 1 source -> bao dam dong bo)."""
     try:
         from auth_manager import get_machine_id
         mid = get_machine_id()
-        if mid: return str(mid)
+        if mid:
+            return str(mid)
     except Exception:
         pass
-    # Fallback: MAC address + username
+    # Fallback
     try:
         import uuid, getpass
         return f"{uuid.getnode():x}_{getpass.getuser()}"
@@ -52,8 +49,7 @@ def _get_machine_id() -> str:
 
 # ══════════ CACHE PATH ══════════
 def _cache_path() -> Path:
-    """Cache o LOCALAPPDATA (Windows) hoac ~/.local/share (linux).
-    An duoi thu muc he thong → khach khong de y, khong de xoa."""
+    """Cache o LOCALAPPDATA (Windows) hoac ~/.local/share (linux)."""
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
     else:
@@ -68,8 +64,8 @@ def _cache_path() -> Path:
 
 # ══════════ SIGNING ══════════
 def _derive_key() -> bytes:
-    """Derived key = SHA256(secret + machine_id). Moi may 1 key khac nhau."""
-    return hashlib.sha256((_sec() + "|" + _get_machine_id()).encode()).digest()
+    """Derived key = SHA256(secret + machine_id). Moi may 1 key khac."""
+    return hashlib.sha256((_LIC_SECRET + "|" + _get_machine_id()).encode()).digest()
 
 def _sign(payload: dict) -> str:
     """HMAC-SHA256 deterministic signature."""
@@ -89,11 +85,10 @@ def _save_cache(username: str, ttl: int = _CACHE_TTL_SEC) -> None:
     try:
         p = _cache_path()
         p.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        # An file (Windows: hidden attribute)
         if sys.platform == "win32":
             try:
                 import ctypes
-                ctypes.windll.kernel32.SetFileAttributesW(str(p), 0x02)  # FILE_ATTRIBUTE_HIDDEN
+                ctypes.windll.kernel32.SetFileAttributesW(str(p), 0x02)  # HIDDEN
             except Exception:
                 pass
     except Exception:
@@ -107,30 +102,24 @@ def _load_cache(username: str):
     except Exception:
         return False, "no_cache"
 
-    # 1. Kiem tra structure
     required = ("user", "mid", "ts", "exp", "sig")
     if not all(k in d for k in required):
         return False, "malformed"
 
-    # 2. Verify HMAC signature (chong tampering)
     sig_saved = d.pop("sig")
     if not hmac.compare_digest(_sign(d), sig_saved):
         return False, "sig_invalid"
 
-    # 3. Check user match
     if d.get("user") != username:
         return False, "user_mismatch"
 
-    # 4. Check machine_id match (chong copy cache sang may khac)
     if d.get("mid") != _get_machine_id():
         return False, "machine_mismatch"
 
-    # 5. Check clock tampering
     now = int(time.time())
     ts  = int(d.get("ts", 0))
     exp = int(d.get("exp", 0))
     if ts > now + _CLOCK_FUTURE_OK:
-        # User tua gio may lui xuong sau khi cache → ts > now
         return False, "clock_tamper"
     if now > exp:
         return False, "expired"
@@ -156,14 +145,41 @@ def _session_set(username: str, secs: int = _SESSION_CACHE_SEC) -> None:
 
 # ══════════ ONLINE CHECK ══════════
 def _check_online(username: str):
-    """Tra (ok, msg) hoac raise neu network error."""
+    """
+    Goi /check_session cua Render server.
+    Tra:
+      (True,  msg)  -> session con hop le
+      (False, msg)  -> bi kick / tai khoan invalid -> reject ngay
+    Raise Exception neu network error -> fallback cache.
+    """
     import requests
-    mid = _get_machine_id()
-    r = requests.post(_url(),
-                      json={"username": username, "machine_id": mid, "secret": _sec()},
-                      timeout=_ONLINE_TIMEOUT)
+    try:
+        from auth_manager import get_session_token
+        token = get_session_token(username)
+    except Exception as e:
+        raise Exception(f"Cannot read session_token: {e}")
+
+    if not token:
+        # Chua login qua auth_manager -> khong co token de check
+        # Tra (False, msg) -> reject (khong fallback cache)
+        return False, "Chua dang nhap. Vui long dang nhap lai."
+
+    r = requests.post(
+        f"{_API_URL}/check_session",
+        json={"username": username, "session_token": token},
+        headers={"X-API-Key": _API_KEY},
+        timeout=_ONLINE_TIMEOUT
+    )
     d = r.json()
-    return bool(d.get("ok", False)), str(d.get("msg", ""))
+
+    if d.get("kicked"):
+        return False, d.get("msg") or "Tai khoan da dang nhap tren may khac."
+
+    if d.get("ok"):
+        return True, d.get("msg", "")
+
+    # ok=false, kicked=false -> loi server -> raise de fallback cache
+    raise Exception(d.get("msg") or "Server error")
 
 # ══════════ PUBLIC API ══════════
 def verify_license(username: str):
@@ -171,40 +187,40 @@ def verify_license(username: str):
     Kiem tra license cho username. Tra (ok: bool, msg: str).
 
     Fail-CLOSED: neu khong xac dinh duoc license la hop le, TU CHOI.
-    (Khac voi bo cu 'return True' khi loi.)
     """
     if not username:
         return False, "Thieu thong tin dang nhap."
 
-    # 0. Session cache (5 phut) — tranh hit server moi lan gen voice
+    # 0. Session cache RAM (5 phut) — tranh hit server moi lan gen voice
     if _session_ok(username):
         return True, ""
 
-    # 1. Thu online
-    online_ok = None; online_msg = ""
+    # 1. Thu online qua /check_session
+    online_ok = None
+    online_msg = ""
     try:
         online_ok, online_msg = _check_online(username)
     except Exception:
-        online_ok = None  # Network error/timeout/JSON error → fallback cache
+        online_ok = None  # Network error -> fallback cache
 
     if online_ok is True:
-        # Server xac nhan OK → cap nhat cache 3 ngay
+        # Server xac nhan OK -> luu cache 3 ngay
         _save_cache(username, _CACHE_TTL_SEC)
         _session_set(username)
         return True, online_msg
 
     if online_ok is False:
-        # Server TU CHOI ro rang → xoa cache + tu choi ngay
+        # Server tu choi ro rang (kicked / khong co token) -> reject + xoa cache
         clear_cache()
         return False, online_msg or "License khong hop le."
 
-    # online_ok is None → network error → fallback cache
+    # online_ok is None -> network error -> fallback cache offline
     ok, reason = _load_cache(username)
     if ok:
         _session_set(username, 60)  # cache RAM ngan hon (1 phut) khi offline
         return True, ""
 
-    # Cache khong co hoac khong hop le → TU CHOI
+    # Cache khong co hoac khong hop le -> TU CHOI
     reason_msg = {
         "no_cache":        "Chua verify online lan nao. Hay ket noi internet de kich hoat.",
         "expired":         "Cache offline da het han (3 ngay). Hay ket noi internet.",
@@ -217,6 +233,6 @@ def verify_license(username: str):
     return False, reason_msg
 
 def invalidate_session():
-    """Xoa session cache — goi khi chuyen tai khoan."""
+    """Xoa session cache RAM — goi khi chuyen tai khoan."""
     _session["user"]  = None
     _session["until"] = 0
