@@ -7529,8 +7529,18 @@ if __name__ == "__main__":
     try:
         import json as _jj, base64 as _b64
         _cache = _Path(__file__).parent / ".login_cache"
-        _d = _jj.loads(_b64.b64decode(_cache.read_text()).decode())
-        _last_username = _d.get("u", "")
+        # FIX v3.22.2: cache duoc luu voi key "username" (line 7219), KHONG phai "u"
+        # Truoc day doc sai key -> _last_username luon rong -> heartbeat khong chay
+        # Try cả "username" (cache moi) va "u" (legacy) de backward-compatible
+        try:
+            _raw = _cache.read_text(encoding="utf-8")
+            try:
+                _d = _jj.loads(_raw)  # Format moi: plain JSON
+            except Exception:
+                _d = _jj.loads(_b64.b64decode(_raw).decode())  # Format cu: base64
+        except Exception:
+            _d = {}
+        _last_username = _d.get("username") or _d.get("u") or ""
     except Exception:
         _last_username = ""
 
