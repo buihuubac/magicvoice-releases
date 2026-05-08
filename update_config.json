@@ -1,0 +1,8 @@
+{
+  "version_url":  "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/version.txt",
+  "download_url": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/magicvoice_gui.py",
+  "extra_files": {
+    "auth_manager.py":  "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/auth_manager.py",
+    "license_guard.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/license_guard.py"
+  }
+}
