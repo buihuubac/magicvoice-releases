@@ -2,6 +2,8 @@
 auth_manager.py — Xac thuc qua API Server (an toan hon)
 Khong can firebase_credentials.json tren may khach
 v3.22: Them session_token cho single-session real-time
+v3.22.3: PERSIST machine_id xuong LOCALAPPDATA de tranh wmic flaky
+         (wmic timeout=2s qua ngan -> rot fallback MAC+hostname -> MID doi)
 """
 import hashlib, os, platform, uuid
 from datetime import datetime, timedelta
@@ -12,37 +14,81 @@ import json as _json
 _API_URL = "https://magicvoice-update-1.onrender.com"
 _API_KEY  = "mv_secret_2025"
 
-# ── Machine ID (CACHE de tranh wmic chay nhieu lan, moi lan ~3-5s) ─
+# ── Machine ID Persist Storage ────────────────────────────────────
+def _get_mid_storage_path():
+    """Tra ve path file luu machine_id.
+    Uu tien LOCALAPPDATA de persist qua reinstall/update tool.
+    """
+    try:
+        if platform.system() == "Windows":
+            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+            if base:
+                d = Path(base) / "MagicVoice"
+                d.mkdir(parents=True, exist_ok=True)
+                return d / "machine_id.dat"
+        else:
+            home = os.environ.get("HOME") or os.path.expanduser("~")
+            if home:
+                d = Path(home) / ".magicvoice"
+                d.mkdir(parents=True, exist_ok=True)
+                return d / "machine_id.dat"
+    except Exception:
+        pass
+    # Fallback cuoi cung: ben canh file auth_manager
+    return Path(__file__).parent / ".machine_id"
+
+_MID_FILE = _get_mid_storage_path()
 _MACHINE_ID_CACHE = None
 
-def get_machine_id() -> str:
-    """Return machine ID, cached after first call to avoid slow wmic."""
-    global _MACHINE_ID_CACHE
-    if _MACHINE_ID_CACHE:
-        return _MACHINE_ID_CACHE
+def _compute_machine_id_raw() -> str:
+    """Compute MID lan dau. Co the cham ~3-5s do wmic."""
     try:
         if platform.system() == "Windows":
             import subprocess
             try:
+                # Tang timeout 2s -> 10s de tranh fallback flaky
                 result = subprocess.run(
                     ["wmic", "csproduct", "get", "UUID"],
-                    capture_output=True, text=True, timeout=2
+                    capture_output=True, text=True, timeout=10
                 )
                 lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
                 uid = lines[-1] if len(lines) >= 2 else ""
                 if uid and uid != "UUID" and len(uid) > 10:
-                    _MACHINE_ID_CACHE = hashlib.sha256(uid.encode()).hexdigest()[:32]
-                    return _MACHINE_ID_CACHE
+                    return hashlib.sha256(uid.encode()).hexdigest()[:32]
             except Exception:
                 pass
         # Fallback: MAC + hostname
         mac  = hex(uuid.getnode())[2:].upper()
         host = platform.node()
-        _MACHINE_ID_CACHE = hashlib.sha256(f"{mac}_{host}".encode()).hexdigest()[:32]
-        return _MACHINE_ID_CACHE
+        return hashlib.sha256(f"{mac}_{host}".encode()).hexdigest()[:32]
     except Exception:
-        _MACHINE_ID_CACHE = hashlib.sha256(str(uuid.getnode()).encode()).hexdigest()[:32]
+        return hashlib.sha256(str(uuid.getnode()).encode()).hexdigest()[:32]
+
+def get_machine_id() -> str:
+    """Return machine ID. Persist xuong file de bao dam ON DINH qua cac lan chay."""
+    global _MACHINE_ID_CACHE
+    if _MACHINE_ID_CACHE:
         return _MACHINE_ID_CACHE
+
+    # 1. Doc tu file persist (uu tien cao nhat — bao dam on dinh)
+    try:
+        if _MID_FILE.exists():
+            saved = _MID_FILE.read_text(encoding="utf-8").strip()
+            if saved and 16 <= len(saved) <= 64 and saved.isalnum():
+                _MACHINE_ID_CACHE = saved
+                return saved
+    except Exception:
+        pass
+
+    # 2. Compute lan dau va save xuong file
+    mid = _compute_machine_id_raw()
+    _MACHINE_ID_CACHE = mid
+    try:
+        _MID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MID_FILE.write_text(mid, encoding="utf-8")
+    except Exception:
+        pass
+    return mid
 
 def _hash_pass(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
