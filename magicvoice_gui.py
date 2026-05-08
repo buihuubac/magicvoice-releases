@@ -2231,6 +2231,10 @@ class App(tk.Tk):
         self._login_msg = login_msg
         self._username  = username
 
+        # v3.22: Single-session heartbeat
+        self._heartbeat_stop = False
+        self._heartbeat_fail_count = 0  # Demem so lan goi server fail lien tiep
+
         # FIX: Tu xoa cache rac 1 lan khi update len v3.17.
         # Vi sao: khach v3.16 update len v3.17 -> chay code update CUA v3.16 (cu),
         # khong co logic xoa cache moi. Cache rac (ref_text Whisper sai luu vinh vien)
@@ -2322,6 +2326,8 @@ class App(tk.Tk):
         # Kiem tra update tu dong khi khoi dong (silent - khong thong bao neu dang moi nhat)
         self.after(3000, lambda: check_for_update(self, silent=True))
         self.after(800, self._check_gpu_and_warn)
+        # v3.22: Bat dau heartbeat single-session sau 30s (de tranh kick ngay khi vua login)
+        self.after(30000, self._start_heartbeat_thread)
         # Tự động tải model nếu đã từng tải trước đó
         if self._cfg.get("auto_load", True):
             self.after(1000, self._auto_load_model)  # Cho _init_network_mode chay truoc
@@ -4641,6 +4647,87 @@ class App(tk.Tk):
                   relief="flat", cursor="hand2", padx=10, pady=6
                   ).pack(side="left")
 
+    # ════════════════════════════════════════════════════════════
+    # v3.22: SINGLE-SESSION HEARTBEAT
+    # ════════════════════════════════════════════════════════════
+    def _start_heartbeat_thread(self):
+        """Bat dau thread kiem tra session 2 phut/lan.
+        Neu server bao kicked -> tool tu logout + dong app.
+        Grace 3 lan fail lien tiep truoc khi kick (tranh kick oan khi mang yeu)."""
+        if not self._username:
+            return  # Khong co username -> bo qua
+        import threading
+        def _hb_loop():
+            import time
+            HEARTBEAT_INTERVAL = 120  # 2 phut
+            MAX_FAIL = 3              # cho phep 3 lan fail truoc khi kick
+            while not self._heartbeat_stop:
+                # Doi 2 phut moi lan check (chia nho de stop nhanh khi close app)
+                for _ in range(HEARTBEAT_INTERVAL):
+                    if self._heartbeat_stop:
+                        return
+                    time.sleep(1)
+                if self._heartbeat_stop:
+                    return
+                try:
+                    from auth_manager import check_session_alive, get_session_token
+                    token = get_session_token(self._username)
+                    if not token:
+                        # Khong co token (account legacy hoac da bi xoa cache) -> bo qua
+                        continue
+                    status, msg = check_session_alive(self._username, token, timeout=8)
+                    if status == "kicked":
+                        # Bi day ra -> kick UI (chay tren main thread)
+                        self.after(0, lambda m=msg: self._kick_user_out(m))
+                        return
+                    elif status == "error":
+                        # Loi mang/server -> tang counter, KHONG kick
+                        self._heartbeat_fail_count += 1
+                        if self._heartbeat_fail_count >= MAX_FAIL:
+                            # Mang die qua lau, log canh bao nhung khong kick
+                            try:
+                                self.after(0, lambda: self._log(
+                                    f"⚠ Khong ket noi server qua {MAX_FAIL*2} phut", "warn"))
+                            except Exception:
+                                pass
+                            self._heartbeat_fail_count = 0  # reset de khong spam
+                    else:
+                        # OK -> reset counter
+                        self._heartbeat_fail_count = 0
+                except Exception:
+                    # Loi bat ngo -> KHONG kick
+                    pass
+        t = threading.Thread(target=_hb_loop, daemon=True)
+        t.start()
+
+    def _kick_user_out(self, msg: str):
+        """Bi server day ra do may khac da login. Logout + dong app."""
+        self._heartbeat_stop = True
+        # Xoa session_token + offline cache de buoc login lai
+        try:
+            from auth_manager import clear_session_token, clear_offline_cache
+            clear_session_token()
+            clear_offline_cache()
+        except Exception:
+            pass
+        # Hien popup va dong app
+        try:
+            messagebox.showwarning(
+                "Phiên đăng nhập đã kết thúc",
+                f"Tài khoản '{self._username}' đã được đăng nhập trên thiết bị khác.\n\n"
+                f"Lý do: {msg}\n\n"
+                "Bạn cần đăng nhập lại để tiếp tục sử dụng.\n"
+                "Một tài khoản chỉ được dùng trên một máy tại một thời điểm.",
+                parent=self
+            )
+        except Exception:
+            pass
+        # Dong app
+        try:
+            self.destroy()
+        except Exception:
+            import sys; sys.exit(0)
+
     def _on_close(self):
         """Lưu cấu hình trước khi đóng."""
         # MOI: luu cau hinh naming TOAN CUC (khong con la batch)
@@ -4673,6 +4760,8 @@ class App(tk.Tk):
             **_name_cfg,
         })
         self.lib.save()  # Đảm bảo lưu voices trước khi đóng
+        # v3.22: Stop heartbeat thread truoc khi destroy
+        self._heartbeat_stop = True
         self.destroy()
 
     def _auto_load_model(self):
