@@ -4,6 +4,8 @@ Khong can firebase_credentials.json tren may khach
 v3.22: Them session_token cho single-session real-time
 v3.22.3: PERSIST machine_id xuong LOCALAPPDATA de tranh wmic flaky
          (wmic timeout=2s qua ngan -> rot fallback MAC+hostname -> MID doi)
+v3.22.4: CHUYEN .session_token + .offline_auth sang LOCALAPPDATA
+         (tranh permission denied khi tool cai o Program Files)
 """
 import hashlib, os, platform, uuid
 from datetime import datetime, timedelta
@@ -93,8 +95,34 @@ def get_machine_id() -> str:
 def _hash_pass(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+# ── User Data Directory (cung 1 cho voi machine_id.dat) ──────────
+def _get_user_data_dir():
+    """Tra ve thu muc luu data nguoi dung (LOCALAPPDATA tren Windows).
+    Tranh ghi vao thu muc cai tool (co the bi UAC/read-only).
+    """
+    try:
+        if platform.system() == "Windows":
+            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+            if base:
+                d = Path(base) / "MagicVoice"
+                d.mkdir(parents=True, exist_ok=True)
+                return d
+        else:
+            home = os.environ.get("HOME") or os.path.expanduser("~")
+            if home:
+                d = Path(home) / ".magicvoice"
+                d.mkdir(parents=True, exist_ok=True)
+                return d
+    except Exception:
+        pass
+    return Path(__file__).parent
+
+_USER_DATA_DIR = _get_user_data_dir()
+
 # ── Session Token Storage (luu sau khi login thanh cong) ─────────
-_SESSION_FILE = Path(__file__).parent / ".session_token"
+_SESSION_FILE = _USER_DATA_DIR / ".session_token"
+# Backward-compat: doc ca file cu o thu muc tool neu file moi chua co
+_SESSION_FILE_LEGACY = Path(__file__).parent / ".session_token"
 
 def save_session_token(username: str, token: str):
     """Luu session_token sau khi login OK. Heartbeat se doc lai."""
@@ -104,29 +132,39 @@ def save_session_token(username: str, token: str):
         encoded = base64.b64encode(_json.dumps(data).encode()).decode()
         _SESSION_FILE.write_text(encoded, encoding="utf-8")
     except Exception:
-        pass
+        # Fallback: ghi vao thu muc tool (legacy)
+        try:
+            import base64
+            data = {"u": username, "t": token, "saved": datetime.now().isoformat()}
+            encoded = base64.b64encode(_json.dumps(data).encode()).decode()
+            _SESSION_FILE_LEGACY.write_text(encoded, encoding="utf-8")
+        except Exception:
+            pass
 
 def get_session_token(username: str) -> str:
     """Doc session_token tu file. Tra '' neu khong co hoac sai username."""
-    try:
-        if not _SESSION_FILE.exists():
-            return ""
-        import base64
-        encoded = _SESSION_FILE.read_text(encoding="utf-8").strip()
-        data = _json.loads(base64.b64decode(encoded).decode())
-        if data.get("u") == username:
-            return data.get("t", "")
-    except Exception:
-        pass
+    import base64
+    # Doc tu file moi truoc
+    for fpath in (_SESSION_FILE, _SESSION_FILE_LEGACY):
+        try:
+            if not fpath.exists():
+                continue
+            encoded = fpath.read_text(encoding="utf-8").strip()
+            data = _json.loads(base64.b64decode(encoded).decode())
+            if data.get("u") == username:
+                return data.get("t", "")
+        except Exception:
+            continue
     return ""
 
 def clear_session_token():
     """Xoa session_token (khi bi kick / logout)."""
-    try:
-        if _SESSION_FILE.exists():
-            _SESSION_FILE.unlink()
-    except Exception:
-        pass
+    for fpath in (_SESSION_FILE, _SESSION_FILE_LEGACY):
+        try:
+            if fpath.exists():
+                fpath.unlink()
+        except Exception:
+            pass
 
 # ── Heartbeat: kiem tra session co bi day ra khong ────────────────
 def check_session_alive(username: str, session_token: str, timeout: int = 8) -> tuple:
@@ -203,7 +241,8 @@ def warm_up_server() -> bool:
         return False
 
 # ── Offline Cache ─────────────────────────────────────────────────
-_OFFLINE_CACHE = Path(__file__).parent / ".offline_auth"
+_OFFLINE_CACHE = _USER_DATA_DIR / ".offline_auth"
+_OFFLINE_CACHE_LEGACY = Path(__file__).parent / ".offline_auth"
 _OFFLINE_DAYS  = 7
 
 def _save_offline_cache(username: str, password: str, msg: str):
@@ -218,34 +257,46 @@ def _save_offline_cache(username: str, password: str, msg: str):
             "mid": get_machine_id(),
         }
         encoded = base64.b64encode(_json.dumps(data).encode()).decode()
-        _OFFLINE_CACHE.write_text(encoded, encoding="utf-8")
+        try:
+            _OFFLINE_CACHE.write_text(encoded, encoding="utf-8")
+        except Exception:
+            _OFFLINE_CACHE_LEGACY.write_text(encoded, encoding="utf-8")
     except Exception:
         pass
 
 def verify_login_offline(username: str, password: str):
-    try:
-        if not _OFFLINE_CACHE.exists():
-            return False, "Chưa có cache offline. Cần đăng nhập online ít nhất 1 lần."
-        import base64
-        encoded = _OFFLINE_CACHE.read_text(encoding="utf-8").strip()
-        data    = _json.loads(base64.b64decode(encoded).decode())
-        if data.get("mid") != get_machine_id():
-            return False, "Cache không hợp lệ trên máy này."
-        exp_dt = datetime.fromisoformat(data["exp"])
-        if datetime.now() > exp_dt:
-            return False, f"Cache offline đã hết hạn {exp_dt.strftime('%d/%m/%Y')}.\nKết nối internet và đăng nhập lại."
-        if data.get("u") != username:
-            return False, "Sai tên tài khoản (offline)."
-        if data.get("p") != _hash_pass(password):
-            return False, "Sai mật khẩu (offline)."
-        days_left = (exp_dt - datetime.now()).days
-        return True, data.get("msg", "Đăng nhập thành công!") + f" [Offline - còn {days_left} ngày]"
-    except Exception as e:
-        return False, f"Lỗi đọc cache: {e}"
+    import base64
+    last_err = None
+    for fpath in (_OFFLINE_CACHE, _OFFLINE_CACHE_LEGACY):
+        try:
+            if not fpath.exists():
+                continue
+            encoded = fpath.read_text(encoding="utf-8").strip()
+            data    = _json.loads(base64.b64decode(encoded).decode())
+            if data.get("mid") != get_machine_id():
+                last_err = "Cache không hợp lệ trên máy này."
+                continue
+            exp_dt = datetime.fromisoformat(data["exp"])
+            if datetime.now() > exp_dt:
+                last_err = f"Cache offline đã hết hạn {exp_dt.strftime('%d/%m/%Y')}.\nKết nối internet và đăng nhập lại."
+                continue
+            if data.get("u") != username:
+                last_err = "Sai tên tài khoản (offline)."
+                continue
+            if data.get("p") != _hash_pass(password):
+                last_err = "Sai mật khẩu (offline)."
+                continue
+            days_left = (exp_dt - datetime.now()).days
+            return True, data.get("msg", "Đăng nhập thành công!") + f" [Offline - còn {days_left} ngày]"
+        except Exception as e:
+            last_err = f"Lỗi đọc cache: {e}"
+            continue
+    return False, last_err or "Chưa có cache offline. Cần đăng nhập online ít nhất 1 lần."
 
 def clear_offline_cache():
-    try:
-        if _OFFLINE_CACHE.exists():
-            _OFFLINE_CACHE.unlink()
-    except Exception:
-        pass
+    for fpath in (_OFFLINE_CACHE, _OFFLINE_CACHE_LEGACY):
+        try:
+            if fpath.exists():
+                fpath.unlink()
+        except Exception:
+            pass

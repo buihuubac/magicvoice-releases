@@ -160,9 +160,10 @@ def _check_online(username: str):
         raise Exception(f"Cannot read session_token: {e}")
 
     if not token:
-        # Chua login qua auth_manager -> khong co token de check
-        # Tra (False, msg) -> reject (khong fallback cache)
-        return False, "Chua dang nhap. Vui long dang nhap lai."
+        # Chua login qua auth_manager -> chua co token de check.
+        # KHONG reject + clear cache -> raise de fallback cache offline.
+        # Neu co cache hop le -> cho qua. Neu khong -> bao "no_cache" cho user.
+        raise Exception("no_session_token")
 
     r = requests.post(
         f"{_API_URL}/check_session",
