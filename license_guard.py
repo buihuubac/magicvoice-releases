@@ -15,11 +15,19 @@ Trang thai fail-CLOSED: khong xac dinh duoc -> tu choi.
 """
 from __future__ import annotations
 import os, sys, json, time, hmac, hashlib
+import base64 as _b64
 from pathlib import Path
 
-# ══════════ ENDPOINTS ══════════
-_API_URL = "https://magicvoice-update-1.onrender.com"
-_API_KEY = "mv_secret_2025"
+# ══════════ ENDPOINTS (obfuscated) ══════════
+def _d(s):
+    """Decode chuoi obfuscated: reverse + base64 decode 2 lan."""
+    try:
+        return _b64.b64decode(_b64.b64decode(s[::-1]).decode()).decode()
+    except Exception:
+        return ""
+
+_API_URL = _d("=0TPRJmdO1GT5Z1RaVnVtNWd50GT4BzUaBjRHp1dWhFTs50VhZnWzkFckdVW0lTeMZTTINGMShUY")
+_API_KEY = _d("=0TVq10dJpHWwYVbjpmVyMmZahlY")
 
 # ══════════ CONFIG ══════════
 _CACHE_TTL_SEC     = 3 * 86400      # 3 ngay: offline toi da 3 ngay
@@ -27,8 +35,8 @@ _SESSION_CACHE_SEC = 300            # 5 phut: cache RAM giam tai server
 _ONLINE_TIMEOUT    = 8              # 8s timeout khi goi /check_session
 _CLOCK_FUTURE_OK   = 3600           # 1 gio tolerance cho clock
 
-# ══════════ SECRET cho HMAC cache (giu de cache cu van read duoc) ══════════
-_LIC_SECRET = "mv_lic_2025"
+# ══════════ SECRET cho HMAC cache (obfuscated) ══════════
+_LIC_SECRET = _d("==QPVpWT3lkeYpGbHJmZahlY")
 
 # ══════════ MACHINE ID ══════════
 def _get_machine_id() -> str:

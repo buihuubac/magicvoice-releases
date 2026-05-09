@@ -7,14 +7,21 @@ v3.22.3: PERSIST machine_id xuong LOCALAPPDATA de tranh wmic flaky
 v3.22.4: CHUYEN .session_token + .offline_auth sang LOCALAPPDATA
          (tranh permission denied khi tool cai o Program Files)
 """
-import hashlib, os, platform, uuid
+import hashlib, os, platform, uuid, base64 as _b64
 from datetime import datetime, timedelta
 from pathlib import Path
 import json as _json
 
-# ── Cau hinh API Server ───────────────────────────────────────────
-_API_URL = "https://magicvoice-update-1.onrender.com"
-_API_KEY  = "mv_secret_2025"
+# ── Cau hinh API Server (obfuscated) ──────────────────────────────
+def _d(s):
+    """Decode chuoi obfuscated: reverse + base64 decode 2 lan."""
+    try:
+        return _b64.b64decode(_b64.b64decode(s[::-1]).decode()).decode()
+    except Exception:
+        return ""
+
+_API_URL = _d("=0TPRJmdO1GT5Z1RaVnVtNWd50GT4BzUaBjRHp1dWhFTs50VhZnWzkFckdVW0lTeMZTTINGMShUY")
+_API_KEY = _d("=0TVq10dJpHWwYVbjpmVyMmZahlY")
 
 # ── Machine ID Persist Storage ────────────────────────────────────
 def _get_mid_storage_path():
