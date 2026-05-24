@@ -1,26 +1,41 @@
 """
-magicvoice_gui.py — BOOTSTRAP file v3.36 (cho khach v3.35 migrate len v3.36)
+magicvoice_gui.py — BOOTSTRAP v3.36 (v2 - chong voi lap)
 
-Khi khach v3.35 bam "Cap nhat ngay":
-- Logic cu trong v3.35 tai file nay ve va de magicvoice_gui.py
-- App v3.35 restart -> chay file nay
-- File nay tai toan bo bo v3.36 (3 .pyd + magicvoice.py + updater.bat + ...)
-- Sau khi tai xong: chay magicvoice.py (entry point v3.36) -> exit
+Logic:
+- Lan 1: Tai bo v3.36 day du, sua launcher (.bat/.vbs) tro magicvoice.py, chay magicvoice.py
+- Lan 2+: Thay flag .migrated_v336 -> chi chay magicvoice.py, KHONG tai lai
 
-File nay CHI dung 1 lan duy nhat. Sau khi migrate, magicvoice.py se thay the no.
+File nay duoc tai ve boi auto-update v3.35 va de magicvoice_gui.py cu.
+Khi v3.35 restart -> chay file nay -> migrate.
 """
 import os
 import sys
 import time
 import shutil
 import urllib.request
-import tkinter as tk
-from tkinter import messagebox
+import subprocess
 from pathlib import Path
 
+APP_DIR = Path(__file__).resolve().parent
+MIGRATION_FLAG = APP_DIR / ".migrated_v336"
+
 # ============================================================
-# CAU HINH
+# CHECK FLAG: Neu da migrate -> chi chay magicvoice.py, exit
 # ============================================================
+if MIGRATION_FLAG.exists():
+    magicvoice_py = APP_DIR / "magicvoice.py"
+    if magicvoice_py.exists():
+        # Chay magicvoice.py va exit ngay (khong show GUI bootstrap nua)
+        subprocess.Popen([sys.executable, str(magicvoice_py)], cwd=str(APP_DIR))
+        sys.exit(0)
+    # Neu vi mot ly do nao do magicvoice.py bi xoa -> tiep tuc tai lai (recover)
+
+# ============================================================
+# LAN DAU MIGRATE: GUI progress + download
+# ============================================================
+import tkinter as tk
+from tkinter import messagebox
+
 BASE_URL = "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main"
 FILES_V336 = [
     "magicvoice_core.cp311-win_amd64.pyd",
@@ -31,13 +46,37 @@ FILES_V336 = [
     "updater.bat",
     "version.txt",
 ]
-APP_DIR = Path(__file__).resolve().parent
+
+
+def _patch_launcher_files():
+    """Sua cac file launcher cua v3.35 (Chay_MagicVoice.bat, MagicVoice.vbs, MagicVoice.bat)
+    de tro toi magicvoice.py thay vi magicvoice_gui.py.
+    Tranh khach bam shortcut Desktop -> chay magicvoice_gui.py (bootstrap) -> lap vo han.
+    """
+    LAUNCHER_FILES = ["Chay_MagicVoice.bat", "MagicVoice.bat", "MagicVoice.vbs"]
+    patched = []
+    for fname in LAUNCHER_FILES:
+        fpath = APP_DIR / fname
+        if not fpath.exists():
+            continue
+        try:
+            content = fpath.read_text(encoding="utf-8", errors="ignore")
+            if "magicvoice_gui.py" in content:
+                new_content = content.replace("magicvoice_gui.py", "magicvoice.py")
+                # Backup file goc 1 lan
+                bak = fpath.with_suffix(fpath.suffix + ".v335.bak")
+                if not bak.exists():
+                    shutil.copy(str(fpath), str(bak))
+                fpath.write_text(new_content, encoding="utf-8")
+                patched.append(fname)
+        except Exception as e:
+            print(f"[Bootstrap] Khong sua duoc {fname}: {e}")
+    return patched
 
 
 def _bootstrap_download_and_launch():
-    """Tai bo v3.36 ve, chay magicvoice.py, exit."""
+    """Tai bo v3.36, sua launcher, tao flag, chay magicvoice.py, exit."""
 
-    # GUI progress
     root = tk.Tk()
     root.title("MagicVoice — Cap nhat len v3.36")
     root.geometry("440x200")
@@ -51,7 +90,6 @@ def _bootstrap_download_and_launch():
     except Exception:
         pass
 
-    # Center window
     root.update_idletasks()
     x = (root.winfo_screenwidth() - 440) // 2
     y = (root.winfo_screenheight() - 200) // 2
@@ -78,10 +116,10 @@ def _bootstrap_download_and_launch():
     root.update()
 
     # ============================================================
-    # Tai tung file thanh .new (an toan, khong de file dang chay)
+    # Tai tung file vao .new (an toan)
     # ============================================================
     total = len(FILES_V336)
-    downloaded_new = []  # de rollback neu loi
+    downloaded_new = []
 
     try:
         for idx, fname in enumerate(FILES_V336, 1):
@@ -92,7 +130,6 @@ def _bootstrap_download_and_launch():
             new_path = APP_DIR / (fname + ".new")
             urllib.request.urlretrieve(url, str(new_path))
 
-            # Verify file khong rong
             if new_path.stat().st_size == 0:
                 raise RuntimeError(f"File {fname} tai ve rong (0 bytes)")
 
@@ -102,7 +139,7 @@ def _bootstrap_download_and_launch():
             root.update()
 
     except Exception as e:
-        # Rollback: xoa cac file .new da tai
+        # Rollback
         for p in downloaded_new:
             try: p.unlink()
             except: pass
@@ -119,7 +156,7 @@ def _bootstrap_download_and_launch():
         sys.exit(1)
 
     # ============================================================
-    # Rename .new -> file thuc (vi day la lan dau, chua co .pyd cu de bi lock)
+    # Rename .new -> file thuc
     # ============================================================
     status_var.set("Dang setup cac file moi...")
     root.update()
@@ -142,17 +179,12 @@ def _bootstrap_download_and_launch():
         sys.exit(1)
 
     # ============================================================
-    # Xoa cac file .py source cu (khong can nua vi da co .pyd)
-    # KHONG xoa magicvoice_gui.py vi NO chinh la file dang chay
-    # -> Se duoc magicvoice.py xoa o lan sau (hoac de y nhu cuoi cung)
+    # SUA LAUNCHER -> tro magicvoice.py
     # ============================================================
-    for old_file in ["auth_manager.py", "license_guard.py"]:
-        try:
-            old_path = APP_DIR / old_file
-            if old_path.exists():
-                old_path.unlink()
-        except Exception:
-            pass  # Khong xoa duoc cung khong sao, .pyd se duoc uu tien load
+    status_var.set("Dang cap nhat shortcut...")
+    root.update()
+    patched = _patch_launcher_files()
+    print(f"[Bootstrap] Da sua launcher: {patched}")
 
     # ============================================================
     # Xoa cache cu
@@ -172,7 +204,15 @@ def _bootstrap_download_and_launch():
         pass
 
     # ============================================================
-    # Chay magicvoice.py (entry point v3.36)
+    # TAO FLAG MIGRATION DA HOAN TAT
+    # ============================================================
+    try:
+        MIGRATION_FLAG.write_text("3.36", encoding="utf-8")
+    except Exception as e:
+        print(f"[Bootstrap] Khong tao duoc flag: {e}")
+
+    # ============================================================
+    # Chay magicvoice.py va exit
     # ============================================================
     bar.config(width=380)
     status_var.set("Cap nhat thanh cong! Dang khoi dong app...")
@@ -180,8 +220,6 @@ def _bootstrap_download_and_launch():
     time.sleep(1)
     root.destroy()
 
-    # Chay magicvoice.py va exit
-    import subprocess
     magicvoice_py = APP_DIR / "magicvoice.py"
     subprocess.Popen(
         [sys.executable, str(magicvoice_py)],
@@ -194,7 +232,6 @@ if __name__ == "__main__":
     try:
         _bootstrap_download_and_launch()
     except Exception as e:
-        # Last-resort error handling
         try:
             import traceback
             log_file = APP_DIR / "bootstrap_error.log"
