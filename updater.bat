@@ -35,33 +35,44 @@ call :swap_file "magicvoice.py"
 call :swap_file "script_processor.py"
 call :swap_file "version.txt"
 
-REM === Khoi dong lai app ===
-REM Tim pythonw.exe de chay an cua so cmd (if exist tuan tu - tranh for %%p)
+REM === Tim pythonw.exe TRIET DE (KHONG goi .bat khac de tranh loi 'p') ===
 set "PYW="
 if exist "%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Python311\pythonw.exe" set "PYW=C:\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Program Files\Python311\pythonw.exe" set "PYW=C:\Program Files\Python311\pythonw.exe"
 if not defined PYW if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python311\pythonw.exe" set "PYW=%USERPROFILE%\AppData\Local\Programs\Python\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Program Files (x86)\Python311\pythonw.exe" set "PYW=C:\Program Files (x86)\Python311\pythonw.exe"
-if defined PYW goto :run_app
-REM Fallback: py launcher ghi ra file tam (tranh for /f %%p va py -3.11w)
-py -3.11 -c "import sys,os;print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))" > "%TEMP%\mv_pyw.txt" 2>nul
-if exist "%TEMP%\mv_pyw.txt" (
-    set /p PYW=<"%TEMP%\mv_pyw.txt"
-    del /Q "%TEMP%\mv_pyw.txt" >nul 2>&1
-)
-if defined PYW if exist "%PYW%" goto :run_app
+if not defined PYW if exist "D:\Python311\pythonw.exe" set "PYW=D:\Python311\pythonw.exe"
 
-REM Cuoi cung: dung Chay_MagicVoice.bat
-if exist "%~dp0Chay_MagicVoice.bat" (
-    start "" "%~dp0Chay_MagicVoice.bat"
-    goto :done
+REM Fallback: hoi py launcher duong dan that (qua file temp, KHONG dung for /f)
+if not defined PYW (
+    py -3.11 -c "import sys,os;print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))" > "%TEMP%\mv_pyw.txt" 2>nul
+    if exist "%TEMP%\mv_pyw.txt" (
+        set /p PYW=<"%TEMP%\mv_pyw.txt"
+        del /Q "%TEMP%\mv_pyw.txt" >nul 2>&1
+    )
 )
 
-goto :done
+REM Fallback 2: where pythonw
+if not defined PYW (
+    where pythonw > "%TEMP%\mv_pyw2.txt" 2>nul
+    if exist "%TEMP%\mv_pyw2.txt" (
+        set /p PYW=<"%TEMP%\mv_pyw2.txt"
+        del /Q "%TEMP%\mv_pyw2.txt" >nul 2>&1
+    )
+)
 
-:run_app
-start "" "%PYW%" "%~dp0magicvoice.py"
+REM Mo app — CHI dung pythonw + magicvoice.py, TUYET DOI khong goi .bat khac
+if defined PYW (
+    if exist "%PYW%" (
+        start "MagicVoice" "%PYW%" "%~dp0magicvoice.py"
+        goto done
+    )
+)
+
+REM Khong tim thay python -> bao loi ro rang (KHONG goi Chay_MagicVoice.bat)
+echo Khong tim thay Python 3.11. Vui long mo app thu cong tu shortcut Desktop.
+timeout /t 3 /nobreak >nul
 
 :done
 exit /b 0
