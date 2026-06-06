@@ -500,6 +500,11 @@ def main():
         print(f"  Tool san sang su dung.")
         print(f"{C['C']}{bar}{C['X']}\n")
         _log("=== THANH CONG ===")
+        try:
+            import pathlib as _pl
+            (_pl.Path(BASE_DIR) / ".deps_installed").write_text("ok")
+        except Exception:
+            pass
         return 0
     else:
         msg = f"CANH BAO: {fail_count} goi chua cai duoc"
