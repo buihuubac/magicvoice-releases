@@ -296,25 +296,31 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 # required=False: warn nhung khong dem vao loi
 # ─────────────────────────────────────────────────────────
 PACKAGES = [
-    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True),
-    ("firebase_admin", "firebase-admin",  [],                       True),
-    ("edge_tts",       "edge-tts",        [],                       True),
-    ("soundfile",      "soundfile",       [],                       True),
-    ("scipy",          "scipy",           [],                       True),
-    ("PIL",            "Pillow",          [],                       True),
-    ("numpy",          "numpy",           [],                       True),
-    ("requests",       "requests",        [],                       True),
-    ("tqdm",           "tqdm",            [],                       True),
-    ("imageio_ffmpeg", "imageio-ffmpeg",  [],                       True),
-    ("sounddevice",    "sounddevice",     [],                       False),  # optional
-    ("pyaudiowpatch",  "pyaudiowpatch",   [],                       False),  # optional
-    ("pydub",          "pydub",           [],                       False),  # optional
-    ("psutil",         "psutil",          [],                       False),  # optional
+    # (import_name, pip_package, extra_pip_args, required, always_upgrade)
+    # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
+    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  False),
+    ("firebase_admin", "firebase-admin",  [],                       True,  False),
+    ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
+    ("soundfile",      "soundfile",       [],                       True,  False),
+    ("scipy",          "scipy",           [],                       True,  False),
+    ("PIL",            "Pillow",          [],                       True,  False),
+    ("numpy",          "numpy",           [],                       True,  False),
+    ("requests",       "requests",        [],                       True,  False),
+    ("tqdm",           "tqdm",            [],                       True,  False),
+    ("imageio_ffmpeg", "imageio-ffmpeg",  [],                       True,  True),   # can moi nhat de lay ffmpeg exe
+    ("sounddevice",    "sounddevice",     [],                       False, False),  # optional
+    ("pyaudiowpatch",  "pyaudiowpatch",   [],                       False, False),  # optional
+    ("pydub",          "pydub",           [],                       False, False),  # optional
+    ("psutil",         "psutil",          [],                       False, False),  # optional
 ]
 
-def ensure_package(imp, pip_pkg, extra, required):
-    """Install package neu chua co. Tra ve True neu OK."""
+def ensure_package(imp, pip_pkg, extra, required, always_upgrade=False):
+    """Install package neu chua co. Tra ve True neu OK.
+    always_upgrade=True: luon upgrade len latest du da co (dung cho package hay doi API)."""
     if can_import(imp):
+        if always_upgrade:
+            info(f"Nang cap {pip_pkg} len phien ban moi nhat...")
+            _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"], retries=1)
         ok(f"{pip_pkg}")
         return True
 
@@ -428,7 +434,7 @@ def main():
     # ── Header ──────────────────────────────────────────────
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.43{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.45{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
@@ -464,8 +470,8 @@ def main():
 
     # ── Buoc 4: Thu vien ────────────────────────────────────
     section("BUOC 4/5 — Thu vien Python", "4/5")
-    for imp, pip_pkg, extra, required in PACKAGES:
-        ensure_package(imp, pip_pkg, extra, required)
+    for imp, pip_pkg, extra, required, always_upgrade in PACKAGES:
+        ensure_package(imp, pip_pkg, extra, required, always_upgrade)
 
     # ── Buoc 5: ffmpeg ──────────────────────────────────────
     section("BUOC 5/5 — ffmpeg", "5/5")
@@ -502,7 +508,11 @@ def main():
         _log("=== THANH CONG ===")
         try:
             import pathlib as _pl
-            (_pl.Path(BASE_DIR) / ".deps_installed").write_text("ok")
+            _ver_str = "ok"
+            _vf = _pl.Path(BASE_DIR) / "version.txt"
+            if _vf.exists():
+                _ver_str = _vf.read_text("utf-8").strip() or "ok"
+            (_pl.Path(BASE_DIR) / ".deps_installed").write_text(_ver_str)
         except Exception:
             pass
         return 0

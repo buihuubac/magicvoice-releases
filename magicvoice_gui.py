@@ -2393,8 +2393,8 @@ class App(tk.Tk):
         self._txt_files:  list[str]=[]
 
         # ── MOI: Naming options TOAN CUC (ap dung cho moi tab) ──
-        # Mac dinh: prefix + so thu tu (voice_01, voice_02, ...)
-        self.out_name_mode   = tk.StringVar(value=self._cfg.get("out_name_mode","prefix"))
+        # Mac dinh: giu ten goc (neu khong dat ten, tu dong luu dung ten file input)
+        self.out_name_mode   = tk.StringVar(value=self._cfg.get("out_name_mode","keep"))
         self.out_prefix_var  = tk.StringVar(value=self._cfg.get("out_prefix","voice_"))
         self.out_start_var   = tk.IntVar(value=int(self._cfg.get("out_start",1)))
         self.out_pad_var     = tk.IntVar(value=int(self._cfg.get("out_pad",2)))
@@ -7409,23 +7409,53 @@ def _main_entry():
     from pathlib import Path as _Path_pre
 
     _flag_file = _Path_pre(__file__).parent / ".deps_installed"
-    if not _flag_file.exists():
+    _ver_file  = _Path_pre(__file__).parent / "version.txt"
+
+    # Doc version hien tai va version da cai truoc do
+    _cur_ver = ""
+    _ins_ver = ""
+    try:
+        if _ver_file.exists():
+            _cur_ver = _ver_file.read_text("utf-8").strip()
+    except Exception: pass
+    try:
+        if _flag_file.exists():
+            _ins_ver = _flag_file.read_text("utf-8").strip()
+    except Exception: pass
+
+    # Can chay setup neu: lan dau chua co flag HOAC version thay doi
+    _need_setup = not _flag_file.exists() or (_cur_ver and _ins_ver != _cur_ver)
+
+    if _need_setup:
         _flags_pre = 0x08000000 if _os_pre.name == "nt" else 0
+        _setup_py  = _Path_pre(__file__).parent / "setup_helper.py"
         _all_ok = True
-        for _mod_pre, _pkg_pre in [("firebase_admin", "firebase-admin"), ("omnivoice", "omnivoice")]:
+        if _setup_py.exists():
+            # Chay setup_helper.py day du: tu dong upgrade package theo phien ban moi
             try:
-                __import__(_mod_pre)
-            except ImportError:
+                _sp_pre.run(
+                    [_sys_pre.executable, str(_setup_py)],
+                    creationflags=_flags_pre, timeout=1200
+                )
+            except Exception:
+                _all_ok = False
+        else:
+            # Fallback: chi cai 2 goi chinh neu setup_helper khong co
+            for _mod_pre, _pkg_pre in [("firebase_admin","firebase-admin"),("omnivoice","omnivoice")]:
                 try:
-                    _sp_pre.run(
-                        [_sys_pre.executable, "-m", "pip", "install",
-                         _pkg_pre, "--quiet", "--no-cache-dir"],
-                        creationflags=_flags_pre, timeout=300
-                    )
-                except Exception:
-                    _all_ok = False
+                    __import__(_mod_pre)
+                except ImportError:
+                    try:
+                        _sp_pre.run(
+                            [_sys_pre.executable, "-m", "pip", "install",
+                             _pkg_pre, "--quiet", "--no-cache-dir"],
+                            creationflags=_flags_pre, timeout=300
+                        )
+                    except Exception:
+                        _all_ok = False
+        # Ghi version moi vao flag de lan sau khong chay lai
         if _all_ok:
-            try: _flag_file.write_text("ok")
+            try: _flag_file.write_text(_cur_ver or "ok")
             except Exception: pass
 
     # FIX v3.20: warm-up server o background ngay khi startup
