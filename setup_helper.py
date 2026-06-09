@@ -7,6 +7,9 @@ Tu dong phat hien GPU/CUDA va cai dung moi truong.
 import sys, os, subprocess, re, time, platform, traceback
 from datetime import datetime
 
+# CREATE_NO_WINDOW: an cua so console tren Windows
+_CFLAGS = 0x08000000 if os.name == "nt" else 0
+
 # ── ANSI colors (Windows 10+) ─────────────────────────────
 os.system("")  # Enable ANSI on Windows terminal
 C = {
@@ -79,7 +82,8 @@ def detect_gpu():
         r = subprocess.run(
             ["nvidia-smi"],
             capture_output=True, text=True, timeout=15,
-            encoding="utf-8", errors="replace"
+            encoding="utf-8", errors="replace",
+            creationflags=_CFLAGS
         )
         if r.returncode != 0:
             return None, None, None
@@ -94,7 +98,8 @@ def detect_gpu():
              "--query-gpu=name,compute_cap",
              "--format=csv,noheader"],
             capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace"
+            encoding="utf-8", errors="replace",
+            creationflags=_CFLAGS
         )
         gpu_name    = None
         compute_cap = None
@@ -177,7 +182,8 @@ def _pip(args, timeout=360, retries=2):
         try:
             r = subprocess.run(
                 cmd, capture_output=True, text=True,
-                timeout=timeout, encoding="utf-8", errors="replace"
+                timeout=timeout, encoding="utf-8", errors="replace",
+                creationflags=_CFLAGS
             )
             if r.returncode == 0:
                 _log(f"pip {' '.join(args[:4])}: OK")
@@ -198,7 +204,8 @@ def can_import(module):
     try:
         r = subprocess.run(
             [PY, "-c", f"import {module}"],
-            capture_output=True, timeout=30
+            capture_output=True, timeout=30,
+            creationflags=_CFLAGS
         )
         return r.returncode == 0
     except Exception:
@@ -217,7 +224,8 @@ def _torch_status():
              "c=torch.cuda.is_available(); "
              "g=torch.cuda.get_device_name(0) if c else 'none'; "
              "print(torch.__version__, c, g)"],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, timeout=60,
+            creationflags=_CFLAGS
         )
         if r.returncode != 0:
             return False, False, None
@@ -358,7 +366,8 @@ def ensure_ffmpeg():
     try:
         r = subprocess.run(
             [PY, "-c", "import imageio_ffmpeg; imageio_ffmpeg.get_ffmpeg_exe()"],
-            capture_output=True, timeout=20
+            capture_output=True, timeout=20,
+            creationflags=_CFLAGS
         )
         if r.returncode == 0:
             ok("ffmpeg (qua imageio-ffmpeg)")
@@ -368,7 +377,8 @@ def ensure_ffmpeg():
 
     # System ffmpeg?
     try:
-        r = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=8)
+        r = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=8,
+                           creationflags=_CFLAGS)
         if r.returncode == 0:
             ok("ffmpeg (system)")
             return
@@ -490,7 +500,8 @@ def main():
                  "import torch; "
                  "print(torch.cuda.get_device_name(0), "
                  "torch.cuda.memory_reserved(0)//1024//1024, 'MB VRAM')"],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, timeout=30,
+                creationflags=_CFLAGS
             )
             gpu_info = r2.stdout.strip() if r2.returncode == 0 else ""
             ok(f"PyTorch {ver} — CUDA OK | {gpu_info}")
