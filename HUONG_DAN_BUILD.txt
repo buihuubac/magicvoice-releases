@@ -264,6 +264,25 @@ DANH SACH FIX TRONG v3.45 (KHONG CHINH SUA CAC VUNG NAY)
                         _sh.move(tmp, wav_path)
                     except Exception: pass
 
+[FIX 16] _run_srt() - Normalize Unicode truoc khi gui vao OmniVoice model
+  File  : magicvoice_gui.py
+  Khu vuc: ham _run_srt(), sau vong lap strip tags (~dong 6289)
+  Mo ta  : SRT file tu phan mem tao phu de (Word, Final Draft, v.v.) thuong chua
+            ky tu Unicode typography: U+201C " (curly quote mo), U+201D " (dong),
+            U+2019 ' (smart apostrophe), U+2014 — (em dash), U+2013 – (en dash),
+            U+2026 … (ellipsis). OmniVoice model khong duoc train du voi cac ky tu
+            nay → tokenizer tao ra token ID bat thuong → model doc sai hoan toan.
+            Vi du: "answer" voi curly quotes → doc nhu "tieng ech keu"; em dash
+            truoc "She" → doc "chit" thay vi "She".
+            OmniVoice source (text.py / _combine_text) chi xu ly newline va CJK
+            spacing, KHONG co Unicode normalization cho typography characters.
+  Fix    : Them vong lap replace truoc if not txt: continue trong _run_srt():
+            for _uc, _asc in [('"','"'),('"','"'),('‘',"'"),(''',"'"),
+                               ('—',', '),('–','-'),('…','...')]:
+                txt = txt.replace(_uc, _asc)
+  Ket qua: Curly quotes → straight quotes, em dash → dau phay, smart apostrophe
+            → straight apostrophe. Model doc dung nhu ASCII thuong.
+
 ════════════════════════════════════════════════════════════════
 CAC FILE KHONG DUOC CHINH SUA (CONSTRAINT TU DAU DU AN)
 ════════════════════════════════════════════════════════════════
@@ -275,6 +294,10 @@ CAC FILE KHONG DUOC CHINH SUA (CONSTRAINT TU DAU DU AN)
 ════════════════════════════════════════════════════════════════
 LICH SU PHIEN BAN
 ════════════════════════════════════════════════════════════════
+v3.45 rebuild 3 (09/06/2026):
+  - FIX 16 : Normalize Unicode (curly quotes/em dash) truoc Backend.gen() trong _run_srt()
+             (model doc sai "answer" nhu tieng ech, "She" nhu "chit" vi SRT chua typography chars)
+
 v3.45 rebuild 2 (09/06/2026):
   - FIX 15 : to_mp3() fallback WAV khi ffmpeg thieu libmp3lame (Edge TTS SRT thu muc trong)
 

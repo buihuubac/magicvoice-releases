@@ -6286,6 +6286,11 @@ class App(tk.Tk):
                 txt = e.text.strip()
                 for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
                     txt = txt.replace(ch, "")
+                # FIX 16: normalize Unicode → ASCII truoc khi gui vao model
+                # (OmniVoice khong duoc train voi curly quotes/em dash nen doc sai)
+                for _uc, _asc in [('“','"'),('”','"'),('‘',"'"),('’',"'"),
+                                   ('—',', '),('–','-'),('…','...')]:
+                    txt = txt.replace(_uc, _asc)
                 if not txt: continue
 
                 entry_num += 1
