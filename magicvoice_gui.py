@@ -6308,9 +6308,11 @@ class App(tk.Tk):
                     except Exception: pass
                     # FIX 12 v2: Chi split tai .!? (sentence boundary), KHONG split tai phay
                     # De model tu xu ly dau phay/nhip nghi ben trong cau mot cach tu nhien
-                    # MAX_CHARS = 450 (gioi han thuc te OmniVoice, chi split khi that su can)
+                    # FIX 18: Ha tu 450 xuong 320 (duoi nguong 375 chars=30s cua OmniVoice)
+                    # OmniVoice dung _generate_chunked() khi text >375 chars → artifact "chit chit"
+                    # 320 dam bao moi chunk gui vao Backend.gen() luon dung _generate_iterative()
                     # 350ms silence giua chunk = nghi tu nhien sau dau cham
-                    _MAX_CH = 450
+                    _MAX_CH = 320
                     import re as _re12
                     if len(txt) <= _MAX_CH:
                         _chunks = [txt]
