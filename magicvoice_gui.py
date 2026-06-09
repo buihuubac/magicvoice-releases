@@ -744,18 +744,19 @@ def to_mp3(tensor, path):
             "-ar", "44100",
             path
         ], capture_output=True, creationflags=_flags)
-        try: os.remove(tmp)
-        except: pass
         if r.returncode != 0:
             raise RuntimeError(r.stderr.decode()[-300:])
-    except (FileNotFoundError, OSError):
-        # ffmpeg khong co → doi duoi .mp3 thanh .wav, giu nguyen WAV da save
+        try: os.remove(tmp)
+        except: pass
+    except Exception:
+        # ffmpeg khong co HOAC that bai (VD: thieu libmp3lame) → fallback WAV
         wav_path = path.replace(".mp3", ".wav")
-        try:
-            import shutil as _sh
-            _sh.move(tmp, wav_path)
-        except Exception:
-            pass
+        if os.path.exists(tmp):
+            try:
+                import shutil as _sh
+                _sh.move(tmp, wav_path)
+            except Exception:
+                pass
 
 
 def to_wav(tensor, path):

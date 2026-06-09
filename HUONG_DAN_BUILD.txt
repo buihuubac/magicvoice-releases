@@ -1,0 +1,295 @@
+════════════════════════════════════════════════════════════════
+HUONG DAN SUA CODE VA BUILD LAI MAGICVOICE v3.45
+Cap nhat: 07/06/2026
+════════════════════════════════════════════════════════════════
+
+QUY TRINH BUILD (PHAI LAM DUNG TUYEN TU NAY)
+──────────────────────────────────────────────
+1. Sua code trong magicvoice_gui.py
+
+2. BUILD (quan trong - phai dung lenh nay, khong duoc compile truc tiep magicvoice_gui.py):
+   copy magicvoice_gui.py magicvoice_core.py
+   py -3.11 -m nuitka --mode=module magicvoice_core.py --remove-output --no-pyi-file --lto=no
+   del magicvoice_core.py
+
+   --> Tao ra: magicvoice_core.cp311-win_amd64.pyd
+   --> File nay phai co PyInit_magicvoice_core (khong phai PyInit_magicvoice_gui)
+   --> Kiem tra bang: python -c "from magicvoice_core import _main_entry; print('OK')"
+
+3. DEPLOY sang client/:
+   - Copy magicvoice_core.cp311-win_amd64.pyd -> client\
+   - Copy magicvoice.py -> client\ (neu co sua)
+   - Copy setup_helper.py -> client\ (neu co sua)
+   - Cap nhat version.txt
+
+4. Dong goi zip:
+   - MagicVoice_Update_vX.XX.zip: chi chua 5 file thay doi (pyd, py, setup, bat, version)
+   - MagicVoice_vX.XX_Client.zip: toan bo thu muc client\
+
+LUU Y QUAN TRONG
+──────────────────
+- KHONG compile "magicvoice_gui.py" truc tiep --> tao ra PyInit_magicvoice_GUI (sai ten)
+- PHAI copy thanh "magicvoice_core.py" roi compile --> PyInit_magicvoice_CORE (dung)
+- KHONG duoc compile magicvoice_core.py neu file do khong phai la copy tu magicvoice_gui.py
+
+════════════════════════════════════════════════════════════════
+DANH SACH FIX TRONG v3.45 (KHONG CHINH SUA CAC VUNG NAY)
+════════════════════════════════════════════════════════════════
+
+[FIX 1] load_config() - CUDA mac dinh GPU (khong con bi ghi de boi device=cpu)
+  File  : magicvoice_gui.py
+  Khu vuc: ham load_config(), bien defaults (~dong 150)
+  Mo ta  : Xoa key "device" khoi dict defaults. Truoc do co "device":"cpu" khien
+            moi lan khoi dong deu dung CPU du co GPU.
+            v3.45: doi mac dinh dtype=float32 (chat luong cao hon float16),
+            doi mac dinh steps=24 (chat luong tot nhat voi FIX 12 v2).
+  Code   : defaults = {"dtype": "float32", "out_dir": ..., "fmt": ".mp3",
+                        "steps": 24, "auto_load": True}
+            (khong co "device" trong dict nay)
+
+[FIX 2] _update_sidebar() click() - Preset list khong bi an khi click voice Edge
+  File  : magicvoice_gui.py
+  Khu vuc: ham click() ben trong _update_sidebar() (~dong 4498)
+  Mo ta  : Khi click voice Edge TTS, chi set tts_mode.set("edge") va cap nhat style
+            nut, KHONG goi _set_tts_mode("edge") vi no se an _preset_section_frame.
+  Code   : self.tts_mode.set("edge")
+            (khong co dong: self._set_tts_mode("edge"))
+
+[FIX 3] _run_edge_text() - Hien messagebox khi Edge TTS khong tao duoc audio
+  File  : magicvoice_gui.py
+  Khu vuc: ham _run_edge_text(), sau vong lap paragraph (~dong 5872)
+  Mo ta  : Neu parts rong sau khi xu ly het, hien messagebox.showerror ro rang.
+            Truoc do im lang, khong co thong bao gi.
+  Code   : if not parts and not self.cancel_ev.is_set():
+               self._log("Edge TTS: Khong tao duoc audio...", "err")
+               messagebox.showerror("Edge TTS Loi", ...)
+
+[FIX 4] gen_edge() - Tuong thich edge-tts 6.x (codec param bi xoa)
+  File  : magicvoice_gui.py
+  Khu vuc: ham gen_edge() ben trong _run_edge_text (~dong 5732) va _run_srt_edge (~dong 6082)
+  Mo ta  : edge-tts 6.x xoa tham so "codec" khoi Communicate.__init__().
+            Fix: dung inspect.signature de detect phien ban API, neu cu dung PCM,
+            neu moi (>= 6.x) luu MP3 roi convert sang WAV qua imageio_ffmpeg.
+  Code   : _use_pcm = 'codec' in _ins.signature(edge_tts.Communicate.__init__).parameters
+
+[FIX 5] _do_split() by_clause - SRT segment phai dat min_w tu
+  File  : magicvoice_gui.py
+  Khu vuc: ham _do_split(), nhanh by_clause, doan else (cw < min_w) (~dong 3008)
+  Mo ta  : Khi chua du min_w tu, KHONG flush som du clause tiep theo se vuot max_w.
+            min_w la rang buoc CUNG, max_w la rang buoc MEM.
+  Code   : else:
+               cur.append(clause); cw += uw
+
+[FIX 6] _do_split() by_word - Tuong tu Fix 5 cho che do word-by-word
+  File  : magicvoice_gui.py
+  Khu vuc: ham _do_split(), nhanh by_word, doan elif cw < min_w (~dong 3025)
+  Mo ta  : Khi chua du min_w, KHONG flush. Chi append word.
+  Code   : elif cw < min_w:
+               cur.append(word); cw += uw
+
+[FIX 7] _run_srt_edge() - Khong them silence sau entry cuoi
+  File  : magicvoice_gui.py
+  Khu vuc: ham _run_srt_edge(), trong vong lap entries (~dong 6187)
+  Mo ta  : Chi them silence neu khong phai entry cuoi.
+  Code   : tensors.append(t)
+            if entry_num < total:
+                tensors.append(silence)
+
+[FIX 8] _run_srt() sequential mode - Khong them silence sau entry cuoi
+  File  : magicvoice_gui.py
+  Khu vuc: ham _run_srt(), sequential mode, trong vong lap entries (~dong 6276)
+  Mo ta  : Tuong tu Fix 7 cho sequential mode.
+  Code   : tensors.append(audio_t)
+            if entry_num < total:
+                tensors.append(silence)
+
+[FIX 9] magicvoice.py - Splash screen truoc khi import torch
+  File  : magicvoice.py (file rieng, KHONG trong pyd)
+  Mo ta  : Splash screen phai hien TRUOC "from magicvoice_core import _main_entry"
+            vi dong import nay trigger _patch_torchaudio() chay module-level (30-60s).
+  CODE NAY KHONG TRONG PYD - dung magicvoice.py hien tai, khong sua.
+
+[FIX 10] setup_helper.py - Tao .deps_installed sau khi cai thanh cong
+  File  : setup_helper.py (file rieng, KHONG trong pyd)
+  Mo ta  : Sau khi pip install xong, tao file .deps_installed de lan sau khong
+            chay lai pip install (mat 5-20 phut moi lan).
+  CODE NAY KHONG TRONG PYD - dung setup_helper.py hien tai, khong sua.
+
+[FIX 11] gen_edge() - torchaudio soundfile backend khong doc duoc MP3 (CRITICAL)
+  File  : magicvoice_gui.py
+  Khu vuc: _run_edge_text (~dong 5777) va _run_srt_edge (~dong 6128)
+  Mo ta  : edge_tts >= 7.x hardcode output la MP3 (audio-24khz-48kbitrate-mono-mp3).
+            torchaudio chi co backend 'soundfile' → KHONG doc duoc MP3 → khong co voice.
+            Fix: TRUOC khi torchaudio.load(), dung imageio_ffmpeg.get_ffmpeg_exe()
+            de convert MP3 → WAV 24kHz mono, roi load WAV (soundfile doc duoc WAV).
+  LY DO  : imageio_ffmpeg la dependency BAT BUOC (required=True trong setup_helper.py),
+            luon co san tren may khach. Khong can pip install them gi.
+  CANH BAO: Giu nguyen khoi try/finally de xoa file temp. Phai co creationflags=0x08000000
+            trong subprocess.run() (xem FIX 11b).
+  Code (_run_edge_text):
+            import imageio_ffmpeg as _iff11
+            import subprocess as _sp11
+            _wav_tmp11 = mp3_path + "_24k.wav"
+            try:
+                _sp11.run([_iff11.get_ffmpeg_exe(), '-i', mp3_path,
+                    '-ar', '24000', '-ac', '1', '-f', 'wav',
+                    _wav_tmp11, '-y', '-loglevel', 'quiet'],
+                    timeout=30, check=True, creationflags=0x08000000)
+                _wv, _sr = torchaudio.load(_wav_tmp11)
+            finally:
+                try: os.remove(_wav_tmp11)
+                except: pass
+  Code (_run_srt_edge): tuong tu, dung _iff11b, _sp11b, _wav_tmp11b
+
+[FIX 11b] subprocess.run() - An cua so den (console) khi chay ffmpeg (CRITICAL UX)
+  File  : magicvoice_gui.py
+  Khu vuc: _run_edge_text (~dong 5777) va _run_srt_edge (~dong 6128)
+            (hai cho goi subprocess.run() cua FIX 11)
+  Mo ta  : Moi lan convert MP3 → WAV, Windows mo cua so console den nhoay len roi tat.
+            Voi SRT nhieu entry, moi entry nhoay 1 lan → rat kho chiu voi khach.
+            Fix: them creationflags=0x08000000 (WIN32 CREATE_NO_WINDOW) vao subprocess.run()
+            → ffmpeg chay an, khong hien cua so.
+  LY DO  : subprocess.run() tren Windows khong co flag CREATE_NO_WINDOW theo mac dinh.
+            0x08000000 la gia tri hex cua WIN32 CREATE_NO_WINDOW constant.
+  Code   : subprocess.run([...], timeout=30, check=True, creationflags=0x08000000)
+  CANH BAO: KHONG bo flag nay. Neu sua FIX 11, phai giu creationflags trong moi subprocess.run().
+
+[FIX 12 v2] SRT entry dai bi re/vap - Split chi tai .!? + 450 chars + 350ms silence
+  File  : magicvoice_gui.py
+  Khu vuc: _run_srt() sequential mode, truoc Backend.gen (~dong 6292)
+           load_config() defaults (~dong 152), steps_var (~dong 2379), _cfg.get (~dong 5846)
+  Mo ta  : OmniVoice gioi han thuc te ~450 chars/lan gen (gioi han thuc te, test tren nhieu cau).
+            FIX 12 v1 (200 chars, split tai ,;) → chunk qua ngan → biên do amplitude khac nhau
+            → tieng click/re tai ranh gioi chunk.
+            FIX 12 v2: Chi split tai .!? (sentence boundary that su), gioi han 450 chars.
+            Model tu xu ly phay, nghi nghi ben trong cau mot cach tu nhien.
+            350ms silence GIUA chunks (nghi sau dau cham), KHONG them sau chunk cuoi.
+            Ket qua: canh dau doc mach lac, khong gioi, khong re.
+  DEFAULT: Steps=24, dtype=float32 (3 cho cho steps: dong 152, 2379, 5846; 2 cho cho dtype)
+  Khach cu co app_config.json voi steps thap: mo file, sua "steps": 24 va "dtype": "float32"
+  CANH BAO: KHONG split tai phay. KHONG giam gioi han xuong 200 chars. KHONG giam steps.
+  Code   :
+            _MAX_CH = 450
+            import re as _re12
+            if len(txt) <= _MAX_CH:
+                _chunks = [txt]
+            else:
+                _sents = _re12.split(r'(?<=[.!?])\s+', txt.strip())
+                _chunks = []; _buf = ""
+                for _s in _sents:
+                    _s = _s.strip()
+                    if not _s: continue
+                    if not _buf: _buf = _s
+                    elif len(_buf) + 1 + len(_s) <= _MAX_CH: _buf += ' ' + _s
+                    else: _chunks.append(_buf); _buf = _s
+                if _buf: _chunks.append(_buf)
+                if not _chunks: _chunks = [txt]
+            _join_sil = torch.zeros(1, int(0.35 * SR))  # 350ms @ 24kHz
+            _parts = []
+            for _ci, _ck in enumerate(_chunks):
+                _a = Backend.gen(_ck, num_step=self.steps_var.get(),
+                                 speed=self._get_speed(), **kw)
+                _parts.append(_to_tensor(_a))
+                if _ci < len(_chunks) - 1:
+                    _parts.append(_join_sil)
+            audio_t = torch.cat(_parts, dim=-1)
+
+[FIX 13] Batch - Mac dinh luu file theo ten goc (khong theo tien to)
+  File  : magicvoice_gui.py
+  Khu vuc: __init__, bien out_name_mode (~dong 2397)
+  Mo ta  : Mac dinh cu la "prefix" (voice_01, voice_02,...) → khach phai di do ten file.
+            Doi thanh "keep" → batch tu dong luu dung ten file input (VD: TXT 2.mp3).
+            Khach co app_config.json cu voi "out_name_mode":"prefix" van giu nguyen cu.
+            Chi anh huong user moi hoac ai chua luu setting.
+  CANH BAO: KHONG sua logic _compute_output_name, chi sua default value.
+  Code   : self.out_name_mode = tk.StringVar(value=self._cfg.get("out_name_mode","keep"))
+
+[FIX 14] Auto-upgrade deps khi update phien ban moi
+  File  : magicvoice_gui.py + setup_helper.py
+  Khu vuc: _patch_torchaudio() module-level startup (~dong 7411)
+  Mo ta  : Truoc day: chi check "if not .deps_installed" → update app nhung giu package cu
+            → loi tuong thich (VD: edge_tts cu khong hoat dong voi pyd moi).
+            Fix: Luu version vao .deps_installed (thay vi "ok"). Khi khoi dong:
+              - Neu .deps_installed khong co → chay setup (lan dau cai dat)
+              - Neu .deps_installed co version KHAC version.txt → chay lai setup_helper.py
+              - setup_helper.py tu dong upgrade edge_tts va imageio_ffmpeg (always_upgrade=True)
+            Ket qua: khach update zip → mo app → setup tu chay ngam → package duoc cap nhat.
+  CANH BAO: setup_helper.py PHAI ghi version vao .deps_installed (khong phai "ok").
+            Neu xoa .deps_installed tay → gio sau mo app setup se chay lai 1 lan.
+  Code (magicvoice_gui.py):
+            _cur_ver = _ver_file.read_text("utf-8").strip()
+            _ins_ver = _flag_file.read_text("utf-8").strip()
+            _need_setup = not _flag_file.exists() or (_cur_ver and _ins_ver != _cur_ver)
+            if _need_setup:
+                _sp_pre.run([_sys_pre.executable, str(_setup_py)],
+                            creationflags=0x08000000, timeout=1200)
+                _flag_file.write_text(_cur_ver or "ok")
+  Code (setup_helper.py - ghi version):
+            _ver_str = _vf.read_text("utf-8").strip() or "ok"
+            (.deps_installed).write_text(_ver_str)
+  Code (setup_helper.py - always_upgrade):
+            ("edge_tts", "edge-tts", [], True, True)       # always_upgrade=True
+            ("imageio_ffmpeg", "imageio-ffmpeg", [], True, True)
+
+[FIX 15] to_mp3() - Fallback WAV khi ffmpeg thieu libmp3lame (CRITICAL)
+  File  : magicvoice_gui.py
+  Khu vuc: ham to_mp3() (~dong 723)
+  Mo ta  : FIX 14 dam bao imageio_ffmpeg luon duoc cai (always_upgrade=True). Khi
+            imageio_ffmpeg duoc cai, _get_ffmpeg() uu tien dung binary cua no thay vi
+            system ffmpeg. Build tinh cua imageio_ffmpeg co the KHONG co libmp3lame →
+            ffmpeg tra ve returncode != 0 → raise RuntimeError → KHONG bi catch boi
+            except (FileNotFoundError, OSError) → propagate len _run_srt_edge →
+            moi entry fail → tensors rong → thu muc output rong.
+            Loi nay bi an trong v3.45 goc (07/06) vi luc do imageio_ffmpeg chua luon
+            duoc cai, _get_ffmpeg() dung system ffmpeg (co libmp3lame).
+            FIX 14 vo tinh kich hoat lai loi nay.
+  LIEN QUAN: FIX 11 sua viec DOC MP3 (MP3→WAV de load tensor). FIX 15 sua viec GHI
+            MP3 (WAV tensor → MP3 output). Hai van de khac nhau.
+  Fix    : 1. Check returncode TRUOC khi os.remove(tmp) → file temp con ton tai cho fallback.
+           2. Doi except (FileNotFoundError, OSError) → except Exception → bat RuntimeError.
+           3. Them if os.path.exists(tmp) truoc shutil.move.
+  Code   :
+            try:
+                r = subprocess.run([_ffmpeg,...], capture_output=True, creationflags=_flags)
+                if r.returncode != 0:
+                    raise RuntimeError(r.stderr.decode()[-300:])
+                try: os.remove(tmp)
+                except: pass
+            except Exception:
+                # ffmpeg khong co HOAC that bai (VD: thieu libmp3lame) → fallback WAV
+                wav_path = path.replace(".mp3", ".wav")
+                if os.path.exists(tmp):
+                    try:
+                        import shutil as _sh
+                        _sh.move(tmp, wav_path)
+                    except Exception: pass
+
+════════════════════════════════════════════════════════════════
+CAC FILE KHONG DUOC CHINH SUA (CONSTRAINT TU DAU DU AN)
+════════════════════════════════════════════════════════════════
+- Backend.gen() trong magicvoice_gui.py (seed=42, guidance_scale=2.0, khong ref_text)
+- OmniVoice flow, login, license
+- auth_manager.py / auth_manager.cp311-win_amd64.pyd
+- license_guard.py / license_guard.cp311-win_amd64.pyd
+
+════════════════════════════════════════════════════════════════
+LICH SU PHIEN BAN
+════════════════════════════════════════════════════════════════
+v3.45 rebuild 2 (09/06/2026):
+  - FIX 15 : to_mp3() fallback WAV khi ffmpeg thieu libmp3lame (Edge TTS SRT thu muc trong)
+
+v3.45 rebuild (08/06/2026):
+  - FIX 13 : Batch mac dinh luu theo ten file goc (khong theo tien to)
+  - FIX 14 : Auto-upgrade package khi update phien ban (so sanh version trong .deps_installed)
+  - Bao mat: Xoa magicvoice_gui.py + error_log.txt + __pycache__ khoi zip gui khach
+
+v3.45 (07/06/2026):
+  - FIX 11 : Edge TTS khong ra voice (torchaudio soundfile khong doc MP3)
+  - FIX 11b: Cua so den nhoay moi SRT entry (CREATE_NO_WINDOW cho subprocess)
+  - FIX 12 v2: SRT entry dai bi re/vap (split chi .!?, 450 chars, 350ms)
+  - DEFAULT: steps=24, dtype=float32
+
+v3.44 (06/06/2026):
+  - FIX 1-10: CUDA mac dinh, Edge TTS preset list, messagebox, split min_w, silence cuoi, splash
+
+════════════════════════════════════════════════════════════════
