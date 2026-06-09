@@ -6286,10 +6286,10 @@ class App(tk.Tk):
                 txt = e.text.strip()
                 for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
                     txt = txt.replace(ch, "")
-                # FIX 16: normalize Unicode → ASCII truoc khi gui vao model
-                # (OmniVoice khong duoc train voi curly quotes/em dash nen doc sai)
-                for _uc, _asc in [('“','"'),('”','"'),('‘',"'"),('’',"'"),
-                                   ('—',', '),('–','-'),('…','...')]:
+                # FIX 16: normalize curly quotes → ASCII (OmniVoice doc sai curly quotes)
+                # CHI replace curly quotes va smart apostrophe.
+                # KHONG replace em dash vi gay nuot chu khi model xu ly danh sach dai.
+                for _uc, _asc in [('\u201c', '"'), ('\u201d', '"'), ('\u2018', "'"), ('\u2019', "'")]:
                     txt = txt.replace(_uc, _asc)
                 if not txt: continue
 
