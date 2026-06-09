@@ -6297,6 +6297,15 @@ class App(tk.Tk):
                 self._st(f"[{entry_num}/{total}] {txt[:50]}")
                 self.after(0, lambda v=i/total*100: self.pb.configure(value=v))
                 try:
+                    # FIX 17: reset GPU random seed truoc moi entry
+                    # OmniVoice dung Gumbel sampling tren GPU voi seed=42 (CPU only).
+                    # Sau nhieu lan Backend.gen(), GPU random state tich luy → gen sai.
+                    try:
+                        import torch as _ts17
+                        _ts17.manual_seed(42)
+                        if _ts17.cuda.is_available():
+                            _ts17.cuda.manual_seed_all(42)
+                    except Exception: pass
                     # FIX 12 v2: Chi split tai .!? (sentence boundary), KHONG split tai phay
                     # De model tu xu ly dau phay/nhip nghi ben trong cau mot cach tu nhien
                     # MAX_CHARS = 450 (gioi han thuc te OmniVoice, chi split khi that su can)
