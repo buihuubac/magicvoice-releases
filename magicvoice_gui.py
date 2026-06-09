@@ -6335,6 +6335,15 @@ class App(tk.Tk):
                         tensors.append(silence)
                     ok += 1
                     self._log(f"  [{entry_num}/{total}] ✓ {txt[:50]}", "info")
+                    # FIX 17: clear VRAM moi 10 entry de tranh GPU state tich luy
+                    # sau ~30 Backend.gen() lien tiep, VRAM fragmented → gen sai
+                    if entry_num % 10 == 0:
+                        try:
+                            import gc as _gc17, torch as _t17
+                            _gc17.collect()
+                            if _t17.cuda.is_available():
+                                _t17.cuda.empty_cache()
+                        except Exception: pass
                 except Exception as ex:
                     fail += 1
                     self._log(f"  [{entry_num}] ❌ {ex}", "err")
