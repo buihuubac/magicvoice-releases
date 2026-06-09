@@ -6764,8 +6764,8 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-                # Tinh ten output (dung helper global)
-                default_name = self._compute_output_name(stem, i)
+                # Batch luon dat ten theo ten file input (khong phu thuoc out_name_mode)
+                default_name = (stem or f"output_{i+1:02d}").strip() or f"output_{i+1:02d}"
                 if ask_name:
                     v = self._ask_output_filename(default_name, Path(fp).name)
                     if v is None or v.strip() == "":
