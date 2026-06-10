@@ -11,7 +11,15 @@ from datetime import datetime
 _CFLAGS = 0x08000000 if os.name == "nt" else 0
 
 # ── ANSI colors (Windows 10+) ─────────────────────────────
-os.system("")  # Enable ANSI on Windows terminal
+import ctypes as _ct
+try:
+    _k32 = _ct.windll.kernel32
+    _hout = _k32.GetStdHandle(-11)
+    _mode = _ct.c_ulong(0)
+    _k32.GetConsoleMode(_hout, _ct.byref(_mode))
+    _k32.SetConsoleMode(_hout, _mode.value | 4)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+except Exception:
+    pass
 C = {
     "R": "\033[91m", "G": "\033[92m", "Y": "\033[93m",
     "B": "\033[94m", "C": "\033[96m", "W": "\033[97m",
@@ -107,13 +115,28 @@ def detect_gpu():
             # Co the co nhieu GPU - lay GPU dau tien
             lines = [l.strip() for l in r2.stdout.strip().splitlines() if l.strip()]
             if lines:
-                parts = lines[0].split(",")
-                if len(parts) >= 2:
-                    gpu_name = parts[0].strip()
+                # Split tai dau phay CUOI CUNG de xu ly ten GPU co dau phay
+                last_comma = lines[0].rfind(",")
+                if last_comma != -1:
+                    gpu_name = lines[0][:last_comma].strip()
                     try:
-                        compute_cap = float(parts[1].strip())
+                        compute_cap = float(lines[0][last_comma+1:].strip())
                     except ValueError:
                         pass
+
+        # Fallback: neu compute_cap query that bai nhung nvidia-smi chinh hoat dong
+        if gpu_name is None and driver_cuda is not None:
+            r3 = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=10,
+                encoding="utf-8", errors="replace", creationflags=_CFLAGS
+            )
+            if r3.returncode == 0 and r3.stdout.strip():
+                blines = [l.strip() for l in r3.stdout.strip().splitlines() if l.strip()]
+                if blines:
+                    gpu_name = blines[0]
+                    compute_cap = _infer_compute_cap(gpu_name)
+                    _log(f"compute_cap query failed, inferred {compute_cap} from '{gpu_name}'", "warn")
 
         return driver_cuda, gpu_name, compute_cap
 
@@ -199,6 +222,42 @@ def _pip(args, timeout=360, retries=2):
             _log(f"pip exception: {e}", "warn")
     return False
 
+def _infer_compute_cap(name):
+    """Infer compute capability tu ten GPU khi nvidia-smi compute_cap query that bai."""
+    n = name.upper()
+    if any(x in n for x in ["RTX 50", "BLACKWELL"]):
+        return 9.0
+    if any(x in n for x in ["RTX 40", "ADA", "L40", "H100", "A100"]):
+        return 8.9
+    if any(x in n for x in ["RTX 30", "A30", "A40", "A10"]):
+        return 8.0
+    if any(x in n for x in ["RTX 20", "GTX 16", "T4"]):
+        return 7.5
+    if any(x in n for x in ["GTX 10", "P100", "V100"]):
+        return 6.1
+    return 7.5  # mac dinh an toan cho GPU NVIDIA khong nhan dang duoc
+
+
+def _pip_with_dots(args, timeout=1200, retries=1):
+    """Chay pip, in dau cham moi 10s de user biet chuong trinh van chay (dung cho torch ~2-3GB)."""
+    import threading as _thr
+    _stop = _thr.Event()
+    def _dot_worker():
+        elapsed = 0
+        while not _stop.is_set():
+            _stop.wait(10)
+            if not _stop.is_set():
+                elapsed += 10
+                print(f"  {C['D']}... {elapsed}s{C['X']}", flush=True)
+    t = _thr.Thread(target=_dot_worker, daemon=True)
+    t.start()
+    try:
+        return _pip(args, timeout=timeout, retries=retries)
+    finally:
+        _stop.set()
+        t.join(timeout=2)
+
+
 def can_import(module):
     """Kiem tra import module co thanh cong khong."""
     try:
@@ -244,10 +303,11 @@ def install_torch(index_url, tag, desc):
     _pip(["uninstall", "torch", "torchvision", "torchaudio", "-y"])
     time.sleep(1)
 
+    info("Tải PyTorch (~2-3 GB lần đầu) — KHÔNG đóng cửa sổ, đang chạy ngầm...")
     extra = ["--index-url", index_url] if index_url else []
-    ok_install = _pip(
+    ok_install = _pip_with_dots(
         ["install", "torch", "torchvision", "torchaudio"] + extra,
-        timeout=600, retries=2
+        timeout=1200, retries=1
     )
     if not ok_install:
         return False
@@ -444,7 +504,7 @@ def main():
     # ── Header ──────────────────────────────────────────────
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.45{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.46{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
