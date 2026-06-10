@@ -1,11 +1,11 @@
-@echo off
+﻿@echo off
 setlocal enabledelayedexpansion
-title MagicVoice TTS Studio - Cai Dat v3.46
+title MagicVoice TTS Studio - Cai Dat v3.47
 cd /d "%~dp0"
 
 echo.
 echo  ================================================
-echo    MagicVoice TTS Studio - Cai Dat Tu Dong v3.46
+echo    MagicVoice TTS Studio - Cai Dat Tu Dong v3.47
 echo  ================================================
 echo.
 
