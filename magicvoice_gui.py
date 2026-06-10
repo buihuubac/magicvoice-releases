@@ -5639,12 +5639,8 @@ class App(tk.Tk):
                     "Vui long chon thu muc khac trong phan Luu tai."
                 )
 
-            # MOI: dat ten theo cau hinh naming global
-            import time as _time
-            _base = vname.replace(" ", "_")
-            # Fallback stem neu mode='keep': dung ten voice + timestamp (giong cu)
-            _fallback = f"{_base}_{_time.strftime('%H%M%S')}"
-            _fname = self._next_out_name_single(_fallback)
+            # Tab Van Ban khong co file nguon → stem rong → _next_out_name_single dung prefix
+            _fname = self._next_out_name_single("")
             # Hoi ten neu user bat tuy chon
             try:
                 if self.out_ask_name_var.get():
@@ -6165,9 +6161,9 @@ class App(tk.Tk):
                     await _aio.sleep(1.5 * (_attempt + 1))
             return None
 
-        # MOI: dat ten output theo cau hinh naming global
-        _fallback = f"SRT_{voice_id.replace('-','_')}"
-        _name = self._next_out_name_single(_fallback)
+        # Dat ten theo stem file SRT (mode=keep) hoac prefix (mode=prefix)
+        _srt_stem = Path(self.srt_path.get()).stem if self.srt_path.get() else ""
+        _name = self._next_out_name_single(_srt_stem)
         try:
             if self.out_ask_name_var.get():
                 _v = self._ask_output_filename(_name, "Tab SRT (Edge TTS)")
@@ -6351,8 +6347,9 @@ class App(tk.Tk):
                     self._log(f"  [{entry_num}] ❌ {ex}", "err")
 
             if tensors and not self.cancel_ev.is_set():
-                # MOI: dat ten output theo naming global
-                _name = self._next_out_name_single("SRT_sequential")
+                # Dat ten theo stem file SRT (mode=keep) hoac prefix (mode=prefix)
+                _srt_stem = Path(self.srt_path.get()).stem if self.srt_path.get() else ""
+                _name = self._next_out_name_single(_srt_stem)
                 try:
                     if self.out_ask_name_var.get():
                         _v = self._ask_output_filename(_name, "Tab SRT (Sequential mode)")
@@ -6432,13 +6429,14 @@ class App(tk.Tk):
     def _next_out_name_single(self, src_stem: str = "") -> str:
         """Sinh ten cho 1 file don le (tab Text/SRT).
         Neu mode='prefix' -> dung counter offset + quet thu muc de khong trung so.
-        Neu mode='keep'  -> dung src_stem."""
+        Neu mode='keep' va co src_stem -> dung src_stem.
+        Neu mode='keep' va khong co src_stem (tab Text/SRT ko co file nguon) -> prefix."""
         try:
             mode = self.out_name_mode.get()
         except Exception:
             mode = "prefix"
-        if mode == "keep":
-            return (src_stem or "output").strip() or "output"
+        if mode == "keep" and src_stem.strip():
+            return src_stem.strip()
         # prefix mode: tim so thap nhat chua bi dung trong out_dir
         try:
             pr  = (self.out_prefix_var.get() or "voice_").strip() or "voice_"
