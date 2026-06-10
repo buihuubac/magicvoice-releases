@@ -6282,11 +6282,9 @@ class App(tk.Tk):
                 txt = e.text.strip()
                 for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
                     txt = txt.replace(ch, "")
-                # FIX 16: normalize curly quotes → ASCII (OmniVoice doc sai curly quotes)
-                # CHI replace curly quotes va smart apostrophe.
-                # KHONG replace em dash vi gay nuot chu khi model xu ly danh sach dai.
-                for _uc, _asc in [('\u201c', '"'), ('\u201d', '"'), ('\u2018', "'"), ('\u2019', "'")]:
-                    txt = txt.replace(_uc, _asc)
+                # NOTE: KHONG normalize curly quotes - OmniVoice xu ly duoc U+201C/201D/2018/2019
+                # FIX 16 da bi revert: thay doi text input lam nuot chu entry 22
+                # Nguyen nhan loi 31/42 la text qua dai, da xu ly bang FIX 18 _MAX_CH=320
                 if not txt: continue
 
                 entry_num += 1
