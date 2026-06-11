@@ -413,6 +413,58 @@ def ensure_package(imp, pip_pkg, extra, required, always_upgrade=False):
 
 
 # ─────────────────────────────────────────────────────────
+# PREREQUISITES (VC++ Redist, .NET) — BUOC 0
+# ─────────────────────────────────────────────────────────
+def _winget_install(pkg_id, desc):
+    """Cai package qua winget. Tra ve True neu OK hoac da co san."""
+    try:
+        r = subprocess.run(
+            ["winget", "install", "--id", pkg_id,
+             "--silent", "--accept-package-agreements", "--accept-source-agreements"],
+            capture_output=True, text=True, timeout=180,
+            creationflags=_CFLAGS
+        )
+        out = (r.stdout + r.stderr).lower()
+        # winget bao "already installed" hoac "no applicable upgrade" -> da co
+        if r.returncode == 0 or any(x in out for x in [
+            "already installed", "no applicable upgrade",
+            "da duoc cai dat", "khong tim thay goi nao"
+        ]):
+            ok(f"{desc}")
+            return True
+        warn(f"{desc} — winget exit {r.returncode}")
+        return False
+    except FileNotFoundError:
+        warn("winget khong co — bo qua (Windows co the can update)")
+        return False
+    except Exception as e:
+        warn(f"{desc} — {e}")
+        return False
+
+def _vcruntime_ok():
+    """Kiem tra VCRUNTIME140.dll load duoc khong (can cho torch)."""
+    import ctypes as _ct
+    for dll in ["VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll"]:
+        try:
+            _ct.cdll.LoadLibrary(dll)
+        except OSError:
+            return False
+    return True
+
+def ensure_prerequisites():
+    """Cai Visual C++ Redistributable neu chua co — can thiet de torch DLLs hoat dong."""
+    if _vcruntime_ok():
+        ok("Visual C++ Redistributable — da co")
+        return
+
+    info("Thieu Visual C++ Redistributable — dang cai tu dong...")
+    _winget_install("Microsoft.VCRedist.2015+.x64",
+                    "Visual C++ Redistributable 2015+ x64")
+    _winget_install("Microsoft.VCRedist.2015+.x86",
+                    "Visual C++ Redistributable 2015+ x86")
+
+
+# ─────────────────────────────────────────────────────────
 # FFMPEG
 # ─────────────────────────────────────────────────────────
 def ensure_ffmpeg():
@@ -513,6 +565,10 @@ def main():
     _log(f"Python: {sys.version}")
     _log(f"Platform: {platform.platform()}")
     _log(f"Base dir: {BASE_DIR}")
+
+    # ── Buoc 0: Prerequisites (VC++ Redist) ─────────────────
+    section("BUOC 0/5 — Moi truong he thong (VC++ Redist)", "0/5")
+    ensure_prerequisites()
 
     # ── Buoc 1: GPU Detection ────────────────────────────────
     section("BUOC 1/5 — Phat hien GPU & chon CUDA", "1/5")
