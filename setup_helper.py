@@ -467,19 +467,31 @@ def ensure_prerequisites():
 # ─────────────────────────────────────────────────────────
 # FFMPEG
 # ─────────────────────────────────────────────────────────
+def _ffmpeg_exe_ok(path):
+    """Kiem tra mot duong dan ffmpeg co chay duoc khong."""
+    try:
+        r = subprocess.run([path, "-version"], capture_output=True,
+                           timeout=8, creationflags=_CFLAGS)
+        return r.returncode == 0
+    except Exception:
+        return False
+
 def ensure_ffmpeg():
     portable = os.path.join(BASE_DIR, "ffmpeg_portable",
                             "ffmpeg-master-latest-win64-gpl", "bin", "ffmpeg.exe")
+
+    # 1. ffmpeg_portable da co san
     if os.path.exists(portable):
         ok("ffmpeg portable")
         return
 
-    # imageio_ffmpeg co san?
+    # 2. imageio-ffmpeg da cai va co ffmpeg exe hop le
     try:
         r = subprocess.run(
-            [PY, "-c", "import imageio_ffmpeg; imageio_ffmpeg.get_ffmpeg_exe()"],
-            capture_output=True, timeout=20,
-            creationflags=_CFLAGS
+            [PY, "-c",
+             "import imageio_ffmpeg, os; p=imageio_ffmpeg.get_ffmpeg_exe(); "
+             "assert os.path.isfile(p)"],
+            capture_output=True, timeout=20, creationflags=_CFLAGS
         )
         if r.returncode == 0:
             ok("ffmpeg (qua imageio-ffmpeg)")
@@ -487,17 +499,48 @@ def ensure_ffmpeg():
     except Exception:
         pass
 
-    # System ffmpeg?
+    # 3. System ffmpeg (da trong PATH)
     try:
-        r = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=8,
-                           creationflags=_CFLAGS)
+        r = subprocess.run(["ffmpeg", "-version"], capture_output=True,
+                           timeout=8, creationflags=_CFLAGS)
         if r.returncode == 0:
-            ok("ffmpeg (system)")
+            ok("ffmpeg (system PATH)")
             return
     except FileNotFoundError:
         pass
 
-    info("Tai ffmpeg portable...")
+    # 4. Winget — nhanh, tin cay, khong can tai file lon (~7MB)
+    info("Cai ffmpeg qua winget...")
+    winget_ok = _winget_install("Gyan.FFmpeg", "ffmpeg (winget)")
+    if winget_ok:
+        # Winget cap nhat PATH system nhung process hien tai chua thay
+        # → kiem tra cac vi tri winget thuong cai
+        winget_paths = [
+            r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
+        ]
+        # Tim them qua where.exe (tim trong PATH moi cua system)
+        try:
+            wr = subprocess.run(["where", "ffmpeg"], capture_output=True,
+                                text=True, timeout=8, creationflags=_CFLAGS)
+            if wr.returncode == 0:
+                for line in wr.stdout.strip().splitlines():
+                    line = line.strip()
+                    if line and os.path.isfile(line):
+                        winget_paths.insert(0, line)
+        except Exception:
+            pass
+        for wp in winget_paths:
+            if _ffmpeg_exe_ok(wp):
+                ok(f"ffmpeg winget — {wp}")
+                return
+        # Winget bao thanh cong nhung chua tim thay exe
+        # → co the can khoi dong lai shell; van OK vi PATH se cap nhat
+        ok("ffmpeg winget — se hoat dong sau khi khoi dong lai app")
+        return
+
+    # 5. Tai ffmpeg portable tu GitHub (~100MB, du phong cuoi)
+    info("Tai ffmpeg portable tu GitHub (co the mat vai phut)...")
     try:
         import urllib.request, zipfile, tempfile
         url = ("https://github.com/BtbN/FFmpeg-Builds/releases/download/"
@@ -508,14 +551,38 @@ def ensure_ffmpeg():
         urllib.request.urlretrieve(url, tmp)
         with zipfile.ZipFile(tmp, "r") as z:
             z.extractall(ffmpeg_dir)
-        os.remove(tmp)
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
         if os.path.exists(portable):
-            ok("ffmpeg portable — da tai")
+            ok("ffmpeg portable — da tai tu GitHub")
             return
     except Exception as e:
-        _log(f"ffmpeg download failed: {e}", "warn")
+        _log(f"ffmpeg GitHub download that bai: {e}", "warn")
 
-    warn("ffmpeg chua cai duoc — xuat file se dung WAV thay MP3")
+    # 6. Force reinstall imageio-ffmpeg (co ffmpeg nho hon, ~30MB)
+    info("Thu cai imageio-ffmpeg (ffmpeg nho)...")
+    try:
+        subprocess.run(
+            [PY, "-m", "pip", "install", "imageio-ffmpeg",
+             "--upgrade", "--force-reinstall", "--no-cache-dir", "--quiet"],
+            capture_output=True, timeout=120, creationflags=_CFLAGS
+        )
+        r = subprocess.run(
+            [PY, "-c",
+             "import imageio_ffmpeg, os; p=imageio_ffmpeg.get_ffmpeg_exe(); "
+             "assert os.path.isfile(p); print(p)"],
+            capture_output=True, text=True, timeout=20, creationflags=_CFLAGS
+        )
+        if r.returncode == 0:
+            ok(f"ffmpeg (imageio-ffmpeg reinstall)")
+            return
+    except Exception:
+        pass
+
+    warn("ffmpeg chua cai duoc — xuat file se dung WAV thay MP3\n"
+         "   → Chay: winget install Gyan.FFmpeg trong CMD (admin)")
 
 
 # ─────────────────────────────────────────────────────────
