@@ -18,8 +18,20 @@ if __name__ == "__main__":
               font=("Segoe UI", 8), bg="#0f1117", fg="#475569").pack(pady=(2, 0))
     _splash.update()
 
-    import os as _os, sys as _sys, traceback as _tb
+    import os as _os, sys as _sys, traceback as _tb, pathlib as _pl
     _log = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "error_log.txt")
+
+    # Neu vua update xong, file .pyd.new ton tai — doi ten truoc khi import
+    _here = _pl.Path(_os.path.abspath(__file__)).parent
+    _pyd  = _here / "magicvoice_core.cp311-win_amd64.pyd"
+    _new_pyd = _pl.Path(str(_pyd) + ".new")
+    if _new_pyd.exists():
+        try:
+            if _pyd.exists():
+                _pyd.unlink()
+            _new_pyd.rename(_pyd)
+        except Exception:
+            pass
 
     try:
         from magicvoice_core import _main_entry

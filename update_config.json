@@ -5,6 +5,7 @@
     "auth_manager.py":   "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/auth_manager.py",
     "license_guard.py":  "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/license_guard.py",
     "setup_helper.py":   "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/setup_helper.py",
-    "script_processor.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/script_processor.py"
+    "script_processor.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/script_processor.py",
+    "magicvoice_core.cp311-win_amd64.pyd.new": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/magicvoice_core.cp311-win_amd64.pyd"
   }
 }
