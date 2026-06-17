@@ -161,9 +161,13 @@ _TORCH_BUILDS = [
      "CUDA 12.4"),
     (121, 7.5,  "https://download.pytorch.org/whl/cu121", "cu121",
      "CUDA 12.1 — RTX 3xxx / 4xxx"),
-    (118, 6.0,  "https://download.pytorch.org/whl/cu118", "cu118",
-     "CUDA 11.8 — RTX 2xxx / GTX 16xx"),
+    (118, 5.0,  "https://download.pytorch.org/whl/cu118", "cu118",
+     "CUDA 11.8 — RTX 2xxx / GTX 16xx / GTX 9xx"),
 ]
+
+_CU118_URL  = "https://download.pytorch.org/whl/cu118"
+_CU118_TAG  = "cu118"
+_CU118_DESC = "CUDA 11.8 (auto-fallback cho GPU doi cu)"
 
 def select_torch_build(driver_cuda_ver, compute_cap):
     """
@@ -173,19 +177,26 @@ def select_torch_build(driver_cuda_ver, compute_cap):
     if driver_cuda_ver is None or compute_cap is None:
         return None, "cpu", "CPU (khong co GPU NVIDIA)"
 
-    # Compute capability qua cu (< 6.0 = Pascal va cu hon)
-    if compute_cap < 6.0:
+    # Compute capability < 5.0 (Kepler tro ve) — cu118 khong ho tro
+    if compute_cap < 5.0:
         return None, "cpu", f"CPU (GPU compute {compute_cap:.1f} — qua cu, khong ho tro CUDA PyTorch)"
 
     try:
         major, minor = driver_cuda_ver.split(".", 1)
         drv_int = int(major) * 10 + int(minor)   # "12.4" -> 124
     except Exception:
+        # Khong doc duoc driver version — neu compute >= 5.0 thi thu cu118
+        if compute_cap >= 5.0:
+            return _CU118_URL, _CU118_TAG, _CU118_DESC
         return None, "cpu", "CPU (khong doc duoc CUDA version)"
 
     for min_drv, min_cc, url, tag, desc in _TORCH_BUILDS:
         if drv_int >= min_drv and compute_cap >= min_cc:
             return url, tag, desc
+
+    # Driver qua cu nhung GPU co the chay cu118 — thu fallback
+    if compute_cap >= 5.0:
+        return _CU118_URL, _CU118_TAG, _CU118_DESC
 
     return None, "cpu", f"CPU (driver CUDA {driver_cuda_ver} qua cu)"
 
@@ -651,6 +662,12 @@ def main():
         warn("Khong phat hien GPU NVIDIA — se dung CPU mode")
 
     index_url, cuda_tag, cuda_desc = select_torch_build(driver_cuda, compute_cap)
+
+    # GPU co mat nhung detection chon CPU → tu dong thu cu118 thay vi bo cuoc
+    if has_gpu and cuda_tag == "cpu":
+        warn("Khong xac dinh duoc CUDA build phu hop — tu dong thu cu118...")
+        index_url, cuda_tag, cuda_desc = _CU118_URL, _CU118_TAG, _CU118_DESC
+
     info(f"Chon build: {C['Y']}{cuda_desc}{C['X']}")
 
     # ── Buoc 2: Upgrade pip ──────────────────────────────────
