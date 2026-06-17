@@ -463,17 +463,42 @@ def _vcruntime_ok():
             return False
     return True
 
+def _dotnet4_ok():
+    """Kiem tra .NET Framework 4.7.2+ da cai chua (qua registry)."""
+    try:
+        r = subprocess.run(
+            ["reg", "query",
+             r"HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full",
+             "/v", "Release"],
+            capture_output=True, text=True, timeout=5, creationflags=_CFLAGS
+        )
+        if r.returncode == 0:
+            m = re.search(r"Release\s+REG_DWORD\s+0x([0-9a-fA-F]+)", r.stdout)
+            if m:
+                return int(m.group(1), 16) >= 461808  # 461808 = 4.7.2
+    except Exception:
+        pass
+    return False
+
 def ensure_prerequisites():
-    """Cai Visual C++ Redistributable neu chua co — can thiet de torch DLLs hoat dong."""
+    """Cai VC++ Redist + .NET Framework neu chua co — can thiet de torch DLLs hoat dong."""
+    # VC++ Redistributable
     if _vcruntime_ok():
         ok("Visual C++ Redistributable — da co")
-        return
+    else:
+        info("Thieu Visual C++ Redistributable — dang cai tu dong...")
+        _winget_install("Microsoft.VCRedist.2015+.x64",
+                        "Visual C++ Redistributable 2015+ x64")
+        _winget_install("Microsoft.VCRedist.2015+.x86",
+                        "Visual C++ Redistributable 2015+ x86")
 
-    info("Thieu Visual C++ Redistributable — dang cai tu dong...")
-    _winget_install("Microsoft.VCRedist.2015+.x64",
-                    "Visual C++ Redistributable 2015+ x64")
-    _winget_install("Microsoft.VCRedist.2015+.x86",
-                    "Visual C++ Redistributable 2015+ x86")
+    # .NET Framework 4
+    if _dotnet4_ok():
+        ok(".NET Framework 4 — da co")
+    else:
+        info("Dang cai .NET Framework 4...")
+        _winget_install("Microsoft.DotNet.Framework.DeveloperPack_4",
+                        ".NET Framework 4 Developer Pack")
 
 
 # ─────────────────────────────────────────────────────────
