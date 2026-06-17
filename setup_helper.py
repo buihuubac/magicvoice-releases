@@ -366,7 +366,7 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 PACKAGES = [
     # (import_name, pip_package, extra_pip_args, required, always_upgrade)
     # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
-    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  False),
+    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  False, "MagicVoice Engine"),
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
     ("soundfile",      "soundfile",       [],                       True,  False),
@@ -382,33 +382,34 @@ PACKAGES = [
     ("psutil",         "psutil",          [],                       False, False),  # optional
 ]
 
-def ensure_package(imp, pip_pkg, extra, required, always_upgrade=False):
+def ensure_package(imp, pip_pkg, extra, required, always_upgrade=False, display_name=None):
     """Install package neu chua co. Tra ve True neu OK.
     always_upgrade=True: luon upgrade len latest du da co (dung cho package hay doi API)."""
+    label = display_name or pip_pkg
     if can_import(imp):
         if always_upgrade:
-            info(f"Nang cap {pip_pkg} len phien ban moi nhat...")
+            info(f"Nang cap {label} len phien ban moi nhat...")
             _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"], retries=1)
-        ok(f"{pip_pkg}")
+        ok(f"{label}")
         return True
 
-    info(f"Cai {pip_pkg}...")
+    info(f"Cai {label}...")
     if _pip(["install", pip_pkg] + extra, retries=2):
         if can_import(imp):
-            ok(f"{pip_pkg} — da cai")
+            ok(f"{label} — da cai")
             return True
 
     # Retry upgrade
     _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"], retries=1)
     if can_import(imp):
-        ok(f"{pip_pkg} — da cai (upgrade)")
+        ok(f"{label} — da cai (upgrade)")
         return True
 
     if required:
-        err(f"{pip_pkg} — THAT BAI")
+        err(f"{label} — THAT BAI")
         _fail_list.append(pip_pkg)
     else:
-        warn(f"{pip_pkg} — khong cai duoc (tuy chon, khong anh huong chinh)")
+        warn(f"{label} — khong cai duoc (tuy chon, khong anh huong chinh)")
     return False
 
 
@@ -663,8 +664,10 @@ def main():
 
     # ── Buoc 4: Thu vien ────────────────────────────────────
     section("BUOC 4/5 — Thu vien Python", "4/5")
-    for imp, pip_pkg, extra, required, always_upgrade in PACKAGES:
-        ensure_package(imp, pip_pkg, extra, required, always_upgrade)
+    for entry in PACKAGES:
+        imp, pip_pkg, extra, required, always_upgrade = entry[:5]
+        display = entry[5] if len(entry) > 5 else None
+        ensure_package(imp, pip_pkg, extra, required, always_upgrade, display_name=display)
 
     # ── Buoc 5: ffmpeg ──────────────────────────────────────
     section("BUOC 5/5 — ffmpeg", "5/5")
