@@ -82,9 +82,9 @@ def section(title, step=""):
 # ─────────────────────────────────────────────────────────
 def detect_gpu():
     """
-    Returns (driver_cuda_ver_str, gpu_name, compute_cap_float)
-    Vi du: ("12.4", "NVIDIA GeForce RTX 4090", 8.9)
-    Returns (None, None, None) neu khong co GPU NVIDIA.
+    Returns (driver_cuda_ver_str, gpu_name, compute_cap_float, driver_ver_str)
+    Vi du: ("12.4", "NVIDIA GeForce RTX 4090", 8.9, "551.23")
+    Returns (None, None, None, None) neu khong co GPU NVIDIA.
     """
     try:
         r = subprocess.run(
@@ -94,16 +94,16 @@ def detect_gpu():
             creationflags=_CFLAGS
         )
         if r.returncode != 0:
-            return None, None, None
+            return None, None, None, None
 
         # CUDA version tu header: "| CUDA Version: 12.4 |"
         m = re.search(r"CUDA Version:\s*(\d+\.\d+)", r.stdout)
         driver_cuda = m.group(1) if m else None
 
-        # GPU name + compute capability
+        # GPU name + compute capability + driver version
         r2 = subprocess.run(
             ["nvidia-smi",
-             "--query-gpu=name,compute_cap",
+             "--query-gpu=name,compute_cap,driver_version",
              "--format=csv,noheader"],
             capture_output=True, text=True, timeout=10,
             encoding="utf-8", errors="replace",
@@ -111,40 +111,51 @@ def detect_gpu():
         )
         gpu_name    = None
         compute_cap = None
+        driver_ver  = None
         if r2.returncode == 0 and r2.stdout.strip():
-            # Co the co nhieu GPU - lay GPU dau tien
             lines = [l.strip() for l in r2.stdout.strip().splitlines() if l.strip()]
             if lines:
-                # Split tai dau phay CUOI CUNG de xu ly ten GPU co dau phay
-                last_comma = lines[0].rfind(",")
-                if last_comma != -1:
+                parts = lines[0].rsplit(",", 2)
+                if len(parts) == 3:
+                    gpu_name   = parts[0].strip()
+                    driver_ver = parts[2].strip()
+                    try:
+                        compute_cap = float(parts[1].strip())
+                    except ValueError:
+                        pass
+                elif len(parts) == 2:
+                    # fallback neu khong co driver_version
+                    last_comma = lines[0].rfind(",")
                     gpu_name = lines[0][:last_comma].strip()
                     try:
                         compute_cap = float(lines[0][last_comma+1:].strip())
                     except ValueError:
                         pass
 
-        # Fallback: neu compute_cap query that bai nhung nvidia-smi chinh hoat dong
+        # Fallback: neu query that bai nhung nvidia-smi chinh hoat dong
         if gpu_name is None and driver_cuda is not None:
             r3 = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                ["nvidia-smi", "--query-gpu=name,driver_version",
+                 "--format=csv,noheader"],
                 capture_output=True, text=True, timeout=10,
                 encoding="utf-8", errors="replace", creationflags=_CFLAGS
             )
             if r3.returncode == 0 and r3.stdout.strip():
                 blines = [l.strip() for l in r3.stdout.strip().splitlines() if l.strip()]
                 if blines:
-                    gpu_name = blines[0]
+                    bparts = blines[0].rsplit(",", 1)
+                    gpu_name   = bparts[0].strip()
+                    driver_ver = bparts[1].strip() if len(bparts) > 1 else None
                     compute_cap = _infer_compute_cap(gpu_name)
-                    _log(f"compute_cap query failed, inferred {compute_cap} from '{gpu_name}'", "warn")
+                    _log(f"compute_cap inferred {compute_cap} from '{gpu_name}'", "warn")
 
-        return driver_cuda, gpu_name, compute_cap
+        return driver_cuda, gpu_name, compute_cap, driver_ver
 
     except FileNotFoundError:
-        return None, None, None   # nvidia-smi khong ton tai
+        return None, None, None, None
     except Exception as e:
         _log(f"GPU detect error: {e}", "warn")
-        return None, None, None
+        return None, None, None, None
 
 
 # ─────────────────────────────────────────────────────────
@@ -676,13 +687,21 @@ def main():
 
     # ── Buoc 1: GPU Detection ────────────────────────────────
     section("BUOC 1/5 — Phat hien GPU & chon CUDA", "1/5")
-    driver_cuda, gpu_name, compute_cap = detect_gpu()
+    driver_cuda, gpu_name, compute_cap, driver_ver = detect_gpu()
 
     has_gpu = gpu_name is not None
     if has_gpu:
         ok(f"GPU     : {gpu_name}")
         ok(f"Compute : {compute_cap}")
-        ok(f"CUDA max: {driver_cuda} (ho tro boi driver)")
+        ok(f"Driver  : {driver_ver or 'N/A'}  |  CUDA max: {driver_cuda or 'N/A'}")
+        # Canh bao driver qua cu cho CUDA 11.8 (can >= 452.39)
+        try:
+            drv_major = float(driver_ver.split(".")[0]) if driver_ver else 999
+            if drv_major < 452:
+                warn(f"Driver {driver_ver} qua cu — CUDA 11.8 can driver >= 452.39")
+                warn("Cap nhat driver tai: https://www.nvidia.com/Download/index.aspx")
+        except Exception:
+            pass
     else:
         warn("Khong phat hien GPU NVIDIA — se dung CPU mode")
 
@@ -735,6 +754,11 @@ def main():
             ok(f"PyTorch {ver} — CUDA OK | {gpu_info}")
         else:
             ok(f"PyTorch {ver} — CPU mode")
+            if has_gpu:
+                warn("GPU co mat nhung CUDA khong hoat dong!")
+                warn("Nguyen nhan thuong gap: Driver NVIDIA qua cu.")
+                warn("► Cap nhat driver tai: https://www.nvidia.com/Download/index.aspx")
+                warn("  Sau khi cap nhat driver, chay lai CaiDat_MagicVoice.bat")
 
     # ── Tong ket ────────────────────────────────────────────
     _flush_log()
