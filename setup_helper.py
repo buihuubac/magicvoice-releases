@@ -132,8 +132,8 @@ def detect_gpu():
                     except ValueError:
                         pass
 
-        # Fallback: neu query that bai nhung nvidia-smi chinh hoat dong
-        if gpu_name is None and driver_cuda is not None:
+        # Fallback: neu query compute_cap that bai nhung nvidia-smi chinh hoat dong
+        if gpu_name is None:
             r3 = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,driver_version",
                  "--format=csv,noheader"],
@@ -185,8 +185,13 @@ def select_torch_build(driver_cuda_ver, compute_cap):
     Tra ve (index_url, tag, desc).
     index_url = None nghia la CPU-only.
     """
-    if driver_cuda_ver is None or compute_cap is None:
+    if compute_cap is None:
         return None, "cpu", "CPU (khong co GPU NVIDIA)"
+    # Co GPU nhung khong doc duoc driver CUDA version → fallback cu118
+    if driver_cuda_ver is None:
+        if compute_cap >= 5.0:
+            return _CU118_URL, _CU118_TAG, "CUDA 11.8 (fallback — khong doc duoc driver CUDA version)"
+        return None, "cpu", f"CPU (GPU compute {compute_cap:.1f} — qua cu)"
 
     # Compute capability < 5.0 (Kepler tro ve) — cu118 khong ho tro
     if compute_cap < 5.0:
@@ -257,7 +262,9 @@ def _infer_compute_cap(name):
         return 7.5
     if any(x in n for x in ["GTX 10", "P100", "V100"]):
         return 6.1
-    return 7.5  # mac dinh an toan cho GPU NVIDIA khong nhan dang duoc
+    if any(x in n for x in ["GTX 9", "GTX 750"]):
+        return 5.2
+    return 6.1  # mac dinh an toan cho GPU NVIDIA khong nhan dang duoc (cu118 compatible)
 
 
 def _pip_with_dots(args, timeout=1200, retries=1):
