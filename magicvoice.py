@@ -5,33 +5,44 @@ if __name__ == "__main__":
     _splash = _tk.Tk()
     _splash.overrideredirect(True)
     _splash.configure(bg="#0f1117")
-    _sw, _sh = 340, 120
+    _sw, _sh = 340, 140
     _sx = (_splash.winfo_screenwidth() - _sw) // 2
     _sy = (_splash.winfo_screenheight() - _sh) // 2
     _splash.geometry(f"{_sw}x{_sh}+{_sx}+{_sy}")
     _splash.attributes("-topmost", True)
     _tk.Label(_splash, text="MagicVoice TTS Studio",
               font=("Segoe UI", 14, "bold"), bg="#0f1117", fg="#c084fc").pack(pady=(18, 4))
-    _tk.Label(_splash, text="Dang khoi dong...",
-              font=("Segoe UI", 10), bg="#0f1117", fg="#94a3b8").pack()
+    _status_lbl = _tk.Label(_splash, text="Dang khoi dong...",
+              font=("Segoe UI", 10), bg="#0f1117", fg="#94a3b8")
+    _status_lbl.pack()
     _tk.Label(_splash, text="(Lan dau co the mat 30-60 giay)",
               font=("Segoe UI", 8), bg="#0f1117", fg="#475569").pack(pady=(2, 0))
     _splash.update()
 
-    import os as _os, sys as _sys, traceback as _tb, pathlib as _pl
-    _log = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "error_log.txt")
+    import os as _os, sys as _sys, traceback as _tb, subprocess as _sp
+    _base = _os.path.dirname(_os.path.abspath(__file__))
+    _log  = _os.path.join(_base, "error_log.txt")
 
-    # Neu vua update xong, file .pyd.new ton tai — doi ten truoc khi import
-    _here = _pl.Path(_os.path.abspath(__file__)).parent
-    _pyd  = _here / "magicvoice_core.cp311-win_amd64.pyd"
-    _new_pyd = _pl.Path(str(_pyd) + ".new")
-    if _new_pyd.exists():
-        try:
-            if _pyd.exists():
-                _pyd.unlink()
-            _new_pyd.rename(_pyd)
-        except Exception:
-            pass
+    # ── Auto-setup sau khi update ──────────────────────────────
+    # So sanh version.txt vs .deps_installed
+    # Neu khac nhau (vua update) → tu dong chay setup_helper.py
+    try:
+        _ver_file  = _os.path.join(_base, "version.txt")
+        _deps_file = _os.path.join(_base, ".deps_installed")
+        _cur_ver   = open(_ver_file,  encoding="utf-8").read().strip() if _os.path.exists(_ver_file)  else ""
+        _dep_ver   = open(_deps_file, encoding="utf-8").read().strip() if _os.path.exists(_deps_file) else ""
+        if _cur_ver and _dep_ver != _cur_ver:
+            _status_lbl.config(text=f"Cap nhat v{_cur_ver} — dang cai dat...")
+            _splash.update()
+            _setup = _os.path.join(_base, "setup_helper.py")
+            if _os.path.exists(_setup):
+                _sp.run([_sys.executable, _setup], timeout=3600)
+    except Exception:
+        pass  # Neu setup that bai, app van khoi dong binh thuong
+    # ──────────────────────────────────────────────────────────
+
+    _status_lbl.config(text="Dang tai module chinh...")
+    _splash.update()
 
     try:
         from magicvoice_core import _main_entry

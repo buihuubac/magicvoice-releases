@@ -395,7 +395,8 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 PACKAGES = [
     # (import_name, pip_package, extra_pip_args, required, always_upgrade)
     # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
-    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  False, "MagicVoice Engine"),
+    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
+    ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
     ("soundfile",      "soundfile",       [],                       True,  False),
@@ -404,7 +405,7 @@ PACKAGES = [
     ("numpy",          "numpy",           [],                       True,  False),
     ("requests",       "requests",        [],                       True,  False),
     ("tqdm",           "tqdm",            [],                       True,  False),
-    ("imageio_ffmpeg", "imageio-ffmpeg",  [],                       True,  True),   # can moi nhat de lay ffmpeg exe
+    ("imageio_ffmpeg", "imageio-ffmpeg",  ["--force-reinstall"],    True,  True),   # can moi nhat de lay ffmpeg exe
     ("sounddevice",    "sounddevice",     [],                       False, False),  # optional
     ("pyaudiowpatch",  "pyaudiowpatch",   [],                       False, False),  # optional
     ("pydub",          "pydub",           [],                       False, False),  # optional
@@ -418,7 +419,7 @@ def ensure_package(imp, pip_pkg, extra, required, always_upgrade=False, display_
     if can_import(imp):
         if always_upgrade:
             info(f"Nang cap {label} len phien ban moi nhat...")
-            _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"], retries=1)
+            _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"] + extra, retries=1)
         ok(f"{label}")
         return True
 
@@ -644,17 +645,18 @@ def ensure_ffmpeg():
 # FINAL VERIFICATION
 # ─────────────────────────────────────────────────────────
 VERIFY_IMPORTS = [
-    ("torch",          "PyTorch"),
-    ("torchaudio",     "torchaudio"),
-    ("omnivoice",      "MagicVoice Engine"),
-    ("firebase_admin", "firebase-admin"),
-    ("edge_tts",       "edge-tts"),
-    ("soundfile",      "soundfile"),
-    ("scipy",          "scipy"),
-    ("PIL",            "Pillow"),
-    ("imageio_ffmpeg", "imageio-ffmpeg"),
-    ("numpy",          "numpy"),
-    ("requests",       "requests"),
+    ("torch",           "PyTorch"),
+    ("torchaudio",      "torchaudio"),
+    ("omnivoice",       "MagicVoice Engine"),
+    ("huggingface_hub", "huggingface-hub"),
+    ("firebase_admin",  "firebase-admin"),
+    ("edge_tts",        "edge-tts"),
+    ("soundfile",       "soundfile"),
+    ("scipy",           "scipy"),
+    ("PIL",             "Pillow"),
+    ("imageio_ffmpeg",  "imageio-ffmpeg"),
+    ("numpy",           "numpy"),
+    ("requests",        "requests"),
 ]
 
 def final_verify():
@@ -672,13 +674,45 @@ def final_verify():
 # ─────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────
+def _download_model():
+    """Download model k2-fsa/OmniVoice ve cache HuggingFace neu chua co."""
+    MODEL_ID = "k2-fsa/OmniVoice"
+    import pathlib as _pl
+    cache_dir = _pl.Path.home() / ".cache" / "huggingface" / "hub" / "models--k2-fsa--OmniVoice"
+    if cache_dir.exists() and any(cache_dir.rglob("*.safetensors")):
+        ok(f"Model da co tai: {cache_dir}")
+        return
+    info("Dang tai model TTS (co the mat 10-30 phut tuy toc do mang)...")
+    info(f"Model: {MODEL_ID}")
+    try:
+        result = subprocess.run(
+            [PY, "-c",
+             "from huggingface_hub import snapshot_download; "
+             f"p = snapshot_download('{MODEL_ID}'); "
+             "print('OK:', p)"],
+            timeout=3600,
+            creationflags=_CFLAGS,
+        )
+        if result.returncode == 0:
+            ok("Tai model hoan tat!")
+        else:
+            warn("Tai model that bai. App van chay nhung se tai khi mo lan dau.")
+            warn("Kiem tra ket noi mang va thu lai: CaiDat_MagicVoice.bat")
+    except subprocess.TimeoutExpired:
+        warn("Qua thoi gian cho (1 gio). Thu lai hoac tai thu cong:")
+        warn(f'  py -3.11 -c "from huggingface_hub import snapshot_download; snapshot_download(\'{MODEL_ID}\')"')
+    except Exception as e:
+        warn(f"Loi: {e}")
+        warn("App van chay nhung se tai model khi mo lan dau.")
+
+
 def main():
     os.chdir(BASE_DIR)
 
     # ── Header ──────────────────────────────────────────────
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.47{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.54{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
@@ -689,11 +723,11 @@ def main():
     _log(f"Base dir: {BASE_DIR}")
 
     # ── Buoc 0: Prerequisites (VC++ Redist) ─────────────────
-    section("BUOC 0/5 — Moi truong he thong (VC++ Redist)", "0/5")
+    section("BUOC 0/6 — Moi truong he thong (VC++ Redist)", "0/6")
     ensure_prerequisites()
 
     # ── Buoc 1: GPU Detection ────────────────────────────────
-    section("BUOC 1/5 — Phat hien GPU & chon CUDA", "1/5")
+    section("BUOC 1/6 — Phat hien GPU & chon CUDA", "1/6")
     driver_cuda, gpu_name, compute_cap, driver_ver = detect_gpu()
 
     has_gpu = gpu_name is not None
@@ -722,24 +756,28 @@ def main():
     info(f"Chon build: {C['Y']}{cuda_desc}{C['X']}")
 
     # ── Buoc 2: Upgrade pip ──────────────────────────────────
-    section("BUOC 2/5 — Nang cap pip", "2/5")
+    section("BUOC 2/6 — Nang cap pip", "2/6")
     _pip(["install", "--upgrade", "pip"], retries=1)
     ok("pip")
 
     # ── Buoc 3: PyTorch ─────────────────────────────────────
-    section("BUOC 3/5 — PyTorch", "3/5")
+    section("BUOC 3/6 — PyTorch", "3/6")
     ensure_torch(index_url, cuda_tag, cuda_desc, has_gpu)
 
     # ── Buoc 4: Thu vien ────────────────────────────────────
-    section("BUOC 4/5 — Thu vien Python", "4/5")
+    section("BUOC 4/6 — Thu vien Python", "4/6")
     for entry in PACKAGES:
         imp, pip_pkg, extra, required, always_upgrade = entry[:5]
         display = entry[5] if len(entry) > 5 else None
         ensure_package(imp, pip_pkg, extra, required, always_upgrade, display_name=display)
 
     # ── Buoc 5: ffmpeg ──────────────────────────────────────
-    section("BUOC 5/5 — ffmpeg", "5/5")
+    section("BUOC 5/6 — ffmpeg", "5/6")
     ensure_ffmpeg()
+
+    # ── Buoc 6: Download model TTS ──────────────────────────
+    section("BUOC 6/6 — Tai model TTS (k2-fsa/OmniVoice)", "6/6")
+    _download_model()
 
     # ── Kiem tra cuoi ───────────────────────────────────────
     section("KIEM TRA CUOI — Xac nhan moi truong")
