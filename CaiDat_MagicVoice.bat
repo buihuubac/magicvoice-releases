@@ -1,11 +1,11 @@
 @echo off
 setlocal enabledelayedexpansion
-title MagicVoice TTS Studio - Cai Dat v3.47
+title MagicVoice TTS Studio - Cai Dat v3.48
 cd /d "%~dp0"
 
 echo.
 echo  ================================================
-echo    MagicVoice TTS Studio - Cai Dat Tu Dong v3.47
+echo    MagicVoice TTS Studio - Cai Dat Tu Dong v3.48
 echo  ================================================
 echo.
 
@@ -22,9 +22,7 @@ REM === Tim Python 3.11 ===
 echo  [1/3] Tim Python 3.11...
 set "PY311="
 
-REM Kiem tra qua OUTPUT, khong phu thuoc exit code
-REM (py.exe moi tren Win11 tra exit 0 ngay ca khi khong co Python 3.11)
-py -3.11 --version 2>&1 | findstr /C:"Python 3.11" >nul
+py -3.11 --version >nul 2>&1
 if not errorlevel 1 (
     set "PY311=py -3.11"
     goto :py_found
@@ -39,60 +37,46 @@ for %%p in (
     "%USERPROFILE%\AppData\Local\Programs\Python\Python311\python.exe"
 ) do (
     if exist %%~p (
-        set "PY311=%%~p"
-        goto :py_found
+        %%~p --version >nul 2>&1
+        if not errorlevel 1 (
+            set "PY311=%%~p"
+            goto :py_found
+        )
     )
 )
 
-REM Python 3.11 chua co - thu 3 phuong an theo thu tu
+REM Python 3.11 chua co - tu dong tai va cai
+echo  Chua co Python 3.11. Dang tai (khoang 25MB)...
+set "PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+set "PY_SETUP=%TEMP%\python311_setup.exe"
 
-REM --- Phuong an 1: winget (Windows 10/11 co san) ---
-echo  Chua co Python 3.11. Thu cai qua winget...
-set "WINGET_EXE=%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe"
-if not exist "%WINGET_EXE%" set "WINGET_EXE=winget"
-"%WINGET_EXE%" install --id Python.Python.3.11 --version 3.11.9 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;(New-Object Net.WebClient).DownloadFile('%PY_URL%','%PY_SETUP%')" >nul 2>&1
+if not exist "%PY_SETUP%" (
+    echo  LOI: Khong tai duoc Python 3.11!
+    echo  Tai thu cong tai:
+    echo    https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+    pause
+    exit /b 1
+)
 
+echo  Dang cai Python 3.11...
+"%PY_SETUP%" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1
+del "%PY_SETUP%" >nul 2>&1
+
+REM Refresh PATH sau khi cai Python
 set "PATH=%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%PATH%"
+
+py -3.11 --version >nul 2>&1
+if not errorlevel 1 (
+    set "PY311=py -3.11"
+    goto :py_found
+)
 if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
     set "PY311=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
     goto :py_found
 )
-py -3.11 --version 2>&1 | findstr /C:"Python 3.11" >nul
-if not errorlevel 1 ( set "PY311=py -3.11" & goto :py_found )
 
-REM --- Phuong an 2: py install 3.11 (py launcher moi tren Windows 11) ---
-echo  Thu cai qua py install 3.11...
-py install 3.11 >nul 2>&1
-timeout /t 5 /nobreak >nul
-py -3.11 --version 2>&1 | findstr /C:"Python 3.11" >nul
-if not errorlevel 1 ( set "PY311=py -3.11" & goto :py_found )
-
-REM --- Phuong an 3: tai truc tiep tu python.org (~25MB) ---
-echo  Thu tai truc tiep tu python.org...
-set "PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-set "PY_SETUP=%TEMP%\python311_setup.exe"
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;(New-Object Net.WebClient).DownloadFile('%PY_URL%','%PY_SETUP%')" >nul 2>&1
-
-if exist "%PY_SETUP%" (
-    echo  Dang cai Python 3.11...
-    "%PY_SETUP%" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1
-    del "%PY_SETUP%" >nul 2>&1
-    set "PATH=%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%PATH%"
-    if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
-        set "PY311=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-        goto :py_found
-    )
-    py -3.11 --version 2>&1 | findstr /C:"Python 3.11" >nul
-    if not errorlevel 1 ( set "PY311=py -3.11" & goto :py_found )
-)
-
-echo.
-echo  LOI: Khong tu dong cai duoc Python 3.11.
-echo  Vui long cai thu cong:
-echo    1. Mo PowerShell hoac CMD
-echo    2. Chay: winget install Python.Python.3.11
-echo    hoac tai: https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
-echo    3. Cai xong, chay lai file nay.
+echo  LOI: Cai Python 3.11 that bai!
 pause
 exit /b 1
 

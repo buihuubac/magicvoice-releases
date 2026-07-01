@@ -1,0 +1,60 @@
+╔══════════════════════════════════════════════════════════╗
+║       MAGICVOICE TTS STUDIO v3.44 — HUONG DAN SU DUNG   ║
+╚══════════════════════════════════════════════════════════╝
+
+CAI DAT LAN DAU (mat 10-20 phut)
+──────────────────────────────────
+1. Giai nen thu muc MagicVoice ra bat ky dau (VD: D:\MagicVoice)
+   ⚠ KHONG cai vao "C:\Program Files" hoac "Program Files (x86)"
+2. Double-click "CaiDat_MagicVoice.bat"
+   → Tu dong cai Python 3.11, PyTorch va cac thu vien can thiet
+3. Sau khi cai xong → double-click "Chay_MagicVoice.bat" de mo app
+
+UPDATE LEN PHIEN BAN MOI (khi co zip moi tu admin)
+────────────────────────────────────────────────────
+1. TAT app dang chay (neu co)
+2. Giai nen file ZIP moi
+3. Copy TOAN BO file ghi de vao thu muc MagicVoice cu
+4. Mo lai "Chay_MagicVoice.bat" — xong
+
+DANG NHAP & LICENSE
+────────────────────
+• Dung tai khoan duoc cap boi admin
+• 1 tai khoan dung tren 2 may (chi 1 may chay cung luc)
+• Tick "Ghi nho tai khoan" de khong phai nhap lai
+• License kiem tra online, cache offline 3 ngay
+
+DUNG CHUNG TAI KHOAN TREN 2 MAY
+─────────────────────────────────
+• Dang nhap tren may B → sau 5-30 giay may A tu thoat
+• Doi qua doi lai bao nhieu lan cung duoc, khong can lien he admin
+
+XU LY SU CO THUONG GAP
+────────────────────────
+• App khong mo duoc / loi khoi dong
+  → Tat tool, mo lai. Neu van loi → lien he admin
+
+• Edge TTS khong ra voice
+  → Kiem tra ket noi internet
+  → Tat app, mo lai, thu lai
+
+• Loi "Tai khoan da kich hoat tren may khac"
+  → Tat tool ben may kia, mo ben may nay se chay
+
+• Loi "Tai khoan da dang ky toi da 2 may"
+  → Lien he admin Zalo 0985 483 623 de reset
+
+• Loi cai dat / khong tai duoc thu vien
+  → Kiem tra ket noi internet, chay lai CaiDat_MagicVoice.bat
+
+YEU CAU HE THONG
+─────────────────
+• Windows 10/11 (64-bit)
+• GPU NVIDIA 6GB VRAM tro len (khuyen nghi)
+• RAM 8GB+, O cung 10GB+
+• Internet (dang nhap + Edge TTS + tai model)
+
+LIEN HE & HO TRO
+─────────────────
+• Zalo: 0985 483 623
+• Nhom ho tro: https://zalo.me/g/bqroiqc6wbcpph3s6sdd
