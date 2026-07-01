@@ -86,9 +86,27 @@ def detect_gpu():
     Vi du: ("12.4", "NVIDIA GeForce RTX 4090", 8.9, "551.23")
     Returns (None, None, None, None) neu khong co GPU NVIDIA.
     """
+    # Tim nvidia-smi: PATH truoc, sau do cac duong dan pho bien
+    _NSMI_PATHS = [
+        "nvidia-smi",
+        r"C:\Windows\System32\nvidia-smi.exe",
+        r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        r"C:\Windows\SysWOW64\nvidia-smi.exe",
+    ]
+    _nsmi = None
+    for _p in _NSMI_PATHS:
+        try:
+            _tr = subprocess.run([_p], capture_output=True, timeout=8, creationflags=_CFLAGS)
+            if _tr.returncode == 0:
+                _nsmi = _p; break
+        except Exception:
+            continue
+    if _nsmi is None:
+        return None, None, None, None
+
     try:
         r = subprocess.run(
-            ["nvidia-smi"],
+            [_nsmi],
             capture_output=True, text=True, timeout=15,
             encoding="utf-8", errors="replace",
             creationflags=_CFLAGS
@@ -102,7 +120,7 @@ def detect_gpu():
 
         # GPU name + compute capability + driver version
         r2 = subprocess.run(
-            ["nvidia-smi",
+            [_nsmi,
              "--query-gpu=name,compute_cap,driver_version",
              "--format=csv,noheader"],
             capture_output=True, text=True, timeout=10,
@@ -135,7 +153,7 @@ def detect_gpu():
         # Fallback: neu query compute_cap that bai nhung nvidia-smi chinh hoat dong
         if gpu_name is None:
             r3 = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name,driver_version",
+                [_nsmi, "--query-gpu=name,driver_version",
                  "--format=csv,noheader"],
                 capture_output=True, text=True, timeout=10,
                 encoding="utf-8", errors="replace", creationflags=_CFLAGS
@@ -376,8 +394,26 @@ def ensure_torch(index_url, tag, desc, has_gpu):
             ok(f"PyTorch {ver2} — {cuda_str}")
             return True
 
+    # CUDA build dau tien that bai → thu lan luot tat ca CUDA build con lai
     if tag != "cpu":
-        warn("Cai CUDA that bai — thu CPU fallback...")
+        _fallback_builds = [
+            ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
+            ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
+            ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
+            ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
+        ]
+        for _url, _tag, _desc in _fallback_builds:
+            if _tag == tag:
+                continue  # da thu roi
+            warn(f"Thu CUDA fallback: {_desc}...")
+            if install_torch(_url, _tag, _desc):
+                inst3, cuda3, ver3 = _torch_status()
+                if inst3:
+                    cuda_str = "CUDA ✓" if cuda3 else "CPU mode"
+                    ok(f"PyTorch {ver3} — {cuda_str}")
+                    return True
+        # Het CUDA → thu CPU
+        warn("Tat ca CUDA that bai — thu CPU fallback...")
         if install_torch(None, "cpu", "CPU fallback"):
             ok("PyTorch (CPU fallback)")
             return True
@@ -684,7 +720,12 @@ def _download_model():
         return
     info("Dang tai model TTS (co the mat 10-30 phut tuy toc do mang)...")
     info(f"Model: {MODEL_ID}")
+    # Thu 1: HuggingFace (qua hf-mirror.com)
+    import os as _os
+    _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    _hf_ok = False
     try:
+        info("Dang ket noi HuggingFace (hf-mirror.com)...")
         result = subprocess.run(
             [PY, "-c",
              "from huggingface_hub import snapshot_download; "
@@ -694,16 +735,39 @@ def _download_model():
             creationflags=_CFLAGS,
         )
         if result.returncode == 0:
-            ok("Tai model hoan tat!")
+            ok("Tai model tu HuggingFace hoan tat!")
+            _hf_ok = True
         else:
-            warn("Tai model that bai. App van chay nhung se tai khi mo lan dau.")
-            warn("Kiem tra ket noi mang va thu lai: CaiDat_MagicVoice.bat")
+            warn("HuggingFace that bai (returncode != 0)")
     except subprocess.TimeoutExpired:
-        warn("Qua thoi gian cho (1 gio). Thu lai hoac tai thu cong:")
-        warn(f'  py -3.11 -c "from huggingface_hub import snapshot_download; snapshot_download(\'{MODEL_ID}\')"')
+        warn("HuggingFace: Qua thoi gian (1 gio)")
     except Exception as e:
-        warn(f"Loi: {e}")
-        warn("App van chay nhung se tai model khi mo lan dau.")
+        warn(f"HuggingFace loi: {e}")
+
+    # Thu 2: Google Drive fallback neu HuggingFace loi
+    if not _hf_ok:
+        warn("Thu fallback: tai tu Google Drive...")
+        _DRIVE_ID   = "13UA5GLL7we60qKJZzJ3wDAWBsG2E242-"
+        _DRIVE_NAME = "MagicVoice_model.zip"
+        _CACHE_DIR  = str(cache_dir.parent)
+        try:
+            import urllib.request as _ur, zipfile as _zf, tempfile as _tf
+            _url = f"https://drive.usercontent.google.com/download?id={_DRIVE_ID}&export=download&confirm=t"
+            _tmp = _tf.gettempdir() + "/" + _DRIVE_NAME
+            info(f"Dang tai tu Google Drive (~vài GB)...")
+            _ur.urlretrieve(_url, _tmp)
+            if _os.path.getsize(_tmp) < 1_000_000:
+                raise RuntimeError("File tai ve qua nho — co the bi chan boi Google")
+            info("Dang giai nen vao cache...")
+            import pathlib as _pl
+            _pl.Path(_CACHE_DIR).mkdir(parents=True, exist_ok=True)
+            with _zf.ZipFile(_tmp, "r") as _z:
+                _z.extractall(_CACHE_DIR)
+            _os.remove(_tmp)
+            ok("Tai model tu Google Drive hoan tat!")
+        except Exception as _de:
+            warn(f"Google Drive that bai: {_de}")
+            warn("Model se duoc tai khi mo app lan dau — bam 'Tai Model'.")
 
 
 def main():
@@ -800,10 +864,26 @@ def main():
         else:
             ok(f"PyTorch {ver} — CPU mode")
             if has_gpu:
-                warn("GPU co mat nhung CUDA khong hoat dong!")
-                warn("Nguyen nhan thuong gap: Driver NVIDIA qua cu.")
-                warn("► Cap nhat driver tai: https://www.nvidia.com/Download/index.aspx")
-                warn("  Sau khi cap nhat driver, chay lai CaiDat_MagicVoice.bat")
+                warn("GPU co mat nhung CUDA khong hoat dong — tu dong thu cai lai...")
+                _retry_builds = [
+                    ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
+                    ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
+                    ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
+                    ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
+                ]
+                for _url, _tag, _desc in _retry_builds:
+                    warn(f"  Thu lai: {_desc}...")
+                    if install_torch(_url, _tag, _desc):
+                        _, cuda_ok2, ver2 = _torch_status()
+                        if cuda_ok2:
+                            ok(f"PyTorch {ver2} — CUDA OK sau retry!")
+                            break
+                        warn(f"  {_desc}: torch cai OK nhung CUDA van khong nhan")
+                else:
+                    warn("Khong the kich hoat CUDA. Nguyen nhan co the:")
+                    warn("  - Driver NVIDIA chua cap nhat (tai tai nvidia.com/download)")
+                    warn("  - GPU khong tuong thich CUDA")
+                    warn("Khi mo app: bam 'Tai Model' → tool se tu dong sua them.")
 
     # ── Tong ket ────────────────────────────────────────────
     _flush_log()
