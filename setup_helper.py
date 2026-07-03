@@ -706,7 +706,22 @@ def final_verify():
     """Import kiem tra lan cuoi. Tra ve so goi loi."""
     failed_count = 0
     for imp, name in VERIFY_IMPORTS:
-        if can_import(imp):
+        if imp == "imageio_ffmpeg":
+            # imageio_ffmpeg: phai kiem tra ffmpeg binary THUC SU chay duoc, khong chi import
+            r = subprocess.run(
+                [PY, "-c",
+                 "import imageio_ffmpeg, subprocess, sys; "
+                 "p=imageio_ffmpeg.get_ffmpeg_exe(); "
+                 "r=subprocess.run([p,'-version'],capture_output=True,timeout=8); "
+                 "sys.exit(0 if r.returncode==0 else 1)"],
+                capture_output=True, timeout=30, creationflags=_CFLAGS
+            )
+            if r.returncode == 0:
+                ok(f"{name} (ffmpeg binary OK)")
+            else:
+                err(f"{name} — ffmpeg binary KHONG CHAY DUOC (anh huong xuat file MP3)")
+                failed_count += 1
+        elif can_import(imp):
             ok(name)
         else:
             err(f"{name} — KHONG IMPORT DUOC")
