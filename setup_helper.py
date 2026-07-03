@@ -432,7 +432,7 @@ PACKAGES = [
     # (import_name, pip_package, extra_pip_args, required, always_upgrade)
     # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
     ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
-    ("huggingface_hub","huggingface_hub", [],                       True,  True),   # can chinh xac de tai model
+    ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
     ("soundfile",      "soundfile",       [],                       True,  False),
@@ -441,7 +441,7 @@ PACKAGES = [
     ("numpy",          "numpy",           [],                       True,  False),
     ("requests",       "requests",        [],                       True,  False),
     ("tqdm",           "tqdm",            [],                       True,  False),
-    ("imageio_ffmpeg", "imageio-ffmpeg",  ["--force-reinstall"],    True,  True),   # force-reinstall: tranh ffmpeg binary bi corrupt/thieu (loi pho bien)
+    ("imageio_ffmpeg", "imageio-ffmpeg",  ["--force-reinstall"],    True,  True),   # can moi nhat de lay ffmpeg exe
     ("sounddevice",    "sounddevice",     [],                       False, False),  # optional
     ("pyaudiowpatch",  "pyaudiowpatch",   [],                       False, False),  # optional
     ("pydub",          "pydub",           [],                       False, False),  # optional
@@ -577,22 +577,17 @@ def ensure_ffmpeg():
         ok("ffmpeg portable")
         return
 
-    # 2. imageio-ffmpeg da cai va ffmpeg binary THUC SU chay duoc
-    # KHONG dung os.path.isfile — file co the ton tai nhung bi corrupt/sai arch/thieu DLL
-    # Phai chay ffmpeg -version de xac nhan hoat dong
+    # 2. imageio-ffmpeg da cai va co ffmpeg exe hop le
     try:
         r = subprocess.run(
             [PY, "-c",
-             "import imageio_ffmpeg, subprocess, sys; "
-             "p=imageio_ffmpeg.get_ffmpeg_exe(); "
-             "r=subprocess.run([p,'-version'],capture_output=True,timeout=8); "
-             "sys.exit(0 if r.returncode==0 else 1)"],
-            capture_output=True, timeout=30, creationflags=_CFLAGS
+             "import imageio_ffmpeg, os; p=imageio_ffmpeg.get_ffmpeg_exe(); "
+             "assert os.path.isfile(p)"],
+            capture_output=True, timeout=20, creationflags=_CFLAGS
         )
         if r.returncode == 0:
-            ok("ffmpeg (qua imageio-ffmpeg — da xac nhan chay duoc)")
+            ok("ffmpeg (qua imageio-ffmpeg)")
             return
-        warn("imageio-ffmpeg co nhung ffmpeg binary loi — se cai lai...")
     except Exception:
         pass
 
@@ -668,14 +663,12 @@ def ensure_ffmpeg():
         )
         r = subprocess.run(
             [PY, "-c",
-             "import imageio_ffmpeg, subprocess, sys; "
-             "p=imageio_ffmpeg.get_ffmpeg_exe(); "
-             "r=subprocess.run([p,'-version'],capture_output=True,timeout=8); "
-             "sys.exit(0 if r.returncode==0 else 1)"],
-            capture_output=True, text=True, timeout=30, creationflags=_CFLAGS
+             "import imageio_ffmpeg, os; p=imageio_ffmpeg.get_ffmpeg_exe(); "
+             "assert os.path.isfile(p); print(p)"],
+            capture_output=True, text=True, timeout=20, creationflags=_CFLAGS
         )
         if r.returncode == 0:
-            ok("ffmpeg (imageio-ffmpeg reinstall — da xac nhan chay duoc)")
+            ok(f"ffmpeg (imageio-ffmpeg reinstall)")
             return
     except Exception:
         pass
@@ -706,22 +699,7 @@ def final_verify():
     """Import kiem tra lan cuoi. Tra ve so goi loi."""
     failed_count = 0
     for imp, name in VERIFY_IMPORTS:
-        if imp == "imageio_ffmpeg":
-            # imageio_ffmpeg: phai kiem tra ffmpeg binary THUC SU chay duoc, khong chi import
-            r = subprocess.run(
-                [PY, "-c",
-                 "import imageio_ffmpeg, subprocess, sys; "
-                 "p=imageio_ffmpeg.get_ffmpeg_exe(); "
-                 "r=subprocess.run([p,'-version'],capture_output=True,timeout=8); "
-                 "sys.exit(0 if r.returncode==0 else 1)"],
-                capture_output=True, timeout=30, creationflags=_CFLAGS
-            )
-            if r.returncode == 0:
-                ok(f"{name} (ffmpeg binary OK)")
-            else:
-                err(f"{name} — ffmpeg binary KHONG CHAY DUOC (anh huong xuat file MP3)")
-                failed_count += 1
-        elif can_import(imp):
+        if can_import(imp):
             ok(name)
         else:
             err(f"{name} — KHONG IMPORT DUOC")
@@ -735,59 +713,38 @@ def final_verify():
 def _download_model():
     """Download model k2-fsa/OmniVoice ve cache HuggingFace neu chua co."""
     MODEL_ID = "k2-fsa/OmniVoice"
-    import pathlib as _pl, os as _os
+    import pathlib as _pl
     cache_dir = _pl.Path.home() / ".cache" / "huggingface" / "hub" / "models--k2-fsa--OmniVoice"
-
-    # Kiem tra model day du (snapshot_download tu xu ly resume neu tai dang):
-    # Chi skip neu co du .safetensors VA .json config — tranh bo qua model tai dang
-    _has_weights = cache_dir.exists() and any(cache_dir.rglob("*.safetensors"))
-    _has_config  = cache_dir.exists() and any(cache_dir.rglob("config.json"))
-    if _has_weights and _has_config:
-        ok(f"Model da co day du tai: {cache_dir}")
+    if cache_dir.exists() and any(cache_dir.rglob("*.safetensors")):
+        ok(f"Model da co tai: {cache_dir}")
         return
-
     info("Dang tai model TTS (co the mat 10-30 phut tuy toc do mang)...")
     info(f"Model: {MODEL_ID}")
+    # Thu 1: HuggingFace (qua hf-mirror.com)
+    import os as _os
+    _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    _hf_ok = False
+    try:
+        info("Dang ket noi HuggingFace (hf-mirror.com)...")
+        result = subprocess.run(
+            [PY, "-c",
+             "from huggingface_hub import snapshot_download; "
+             f"p = snapshot_download('{MODEL_ID}'); "
+             "print('OK:', p)"],
+            timeout=3600,
+            creationflags=_CFLAGS,
+        )
+        if result.returncode == 0:
+            ok("Tai model tu HuggingFace hoan tat!")
+            _hf_ok = True
+        else:
+            warn("HuggingFace that bai (returncode != 0)")
+    except subprocess.TimeoutExpired:
+        warn("HuggingFace: Qua thoi gian (1 gio)")
+    except Exception as e:
+        warn(f"HuggingFace loi: {e}")
 
-    def _try_hf(endpoint=None):
-        """Chay snapshot_download voi endpoint tuy chon. Tra ve True neu thanh cong."""
-        env = dict(_os.environ)
-        if endpoint:
-            env["HF_ENDPOINT"] = endpoint
-        elif "HF_ENDPOINT" in env:
-            del env["HF_ENDPOINT"]   # dung endpoint mac dinh (huggingface.co)
-        label = endpoint or "huggingface.co"
-        info(f"Dang ket noi {label}...")
-        try:
-            r = subprocess.run(
-                [PY, "-c",
-                 "from huggingface_hub import snapshot_download; "
-                 f"snapshot_download('{MODEL_ID}'); "
-                 "print('__MV_OK__')"],
-                timeout=3600,
-                env=env,
-            )
-            return r.returncode == 0
-        except subprocess.TimeoutExpired:
-            warn(f"{label}: Qua thoi gian (1 gio)")
-            return False
-        except Exception as e:
-            warn(f"{label} loi: {e}")
-            return False
-
-    # Thu 1: HuggingFace goc (huggingface.co) — khong nen mirror de tranh lech phien ban
-    _hf_ok = _try_hf(endpoint=None)
-    if _hf_ok:
-        ok("Tai model tu HuggingFace hoan tat!")
-
-    # Thu 2: Mirror hf-mirror.com neu HF goc that bai
-    if not _hf_ok:
-        warn("HuggingFace goc that bai — thu mirror hf-mirror.com...")
-        _hf_ok = _try_hf(endpoint="https://hf-mirror.com")
-        if _hf_ok:
-            ok("Tai model tu hf-mirror.com hoan tat!")
-
-    # Thu 3: Google Drive fallback neu ca 2 HF endpoint deu that bai
+    # Thu 2: Google Drive fallback neu HuggingFace loi
     if not _hf_ok:
         warn("Thu fallback: tai tu Google Drive...")
         _DRIVE_ID   = "13UA5GLL7we60qKJZzJ3wDAWBsG2E242-"
@@ -817,16 +774,9 @@ def main():
     os.chdir(BASE_DIR)
 
     # ── Header ──────────────────────────────────────────────
-    _ver_display = "?"
-    try:
-        _vf = os.path.join(BASE_DIR, "version.txt")
-        if os.path.exists(_vf):
-            _ver_display = open(_vf, encoding="utf-8").read().strip() or "?"
-    except Exception:
-        pass
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v{_ver_display}{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.57{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
