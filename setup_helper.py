@@ -188,8 +188,6 @@ _TORCH_BUILDS = [
      "CUDA 12.6"),
     (124, 7.5,  "https://download.pytorch.org/whl/cu124", "cu124",
      "CUDA 12.4"),
-    (121, 7.5,  "https://download.pytorch.org/whl/cu121", "cu121",
-     "CUDA 12.1 — RTX 3xxx / 4xxx"),
     (118, 5.0,  "https://download.pytorch.org/whl/cu118", "cu118",
      "CUDA 11.8 — RTX 2xxx / GTX 16xx / GTX 9xx"),
 ]
@@ -353,7 +351,7 @@ def install_torch(index_url, tag, desc):
     info("Tải PyTorch (~2-3 GB lần đầu) — KHÔNG đóng cửa sổ, đang chạy ngầm...")
     extra = ["--index-url", index_url] if index_url else []
     ok_install = _pip_with_dots(
-        ["install", "torch", "torchvision", "torchaudio"] + extra,
+        ["install", "torch==2.8.0", "torchaudio==2.8.0"] + extra,
         timeout=1200, retries=1
     )
     if not ok_install:
@@ -398,7 +396,6 @@ def ensure_torch(index_url, tag, desc, has_gpu):
     if tag != "cpu":
         _fallback_builds = [
             ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
-            ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
             ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
             ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
         ]
@@ -711,21 +708,20 @@ def final_verify():
 # MAIN
 # ─────────────────────────────────────────────────────────
 def _download_model():
-    """Download model k2-fsa/OmniVoice ve cache HuggingFace neu chua co."""
+    """Download MagicVoice Engine ve cache HuggingFace neu chua co."""
     MODEL_ID = "k2-fsa/OmniVoice"
     import pathlib as _pl
     cache_dir = _pl.Path.home() / ".cache" / "huggingface" / "hub" / "models--k2-fsa--OmniVoice"
     if cache_dir.exists() and any(cache_dir.rglob("*.safetensors")):
-        ok(f"Model da co tai: {cache_dir}")
+        ok(f"MagicVoice Engine da co trong cache")
         return
-    info("Dang tai model TTS (co the mat 10-30 phut tuy toc do mang)...")
-    info(f"Model: {MODEL_ID}")
+    info("Dang tai MagicVoice Engine (co the mat 10-30 phut tuy toc do mang)...")
     # Thu 1: HuggingFace (qua hf-mirror.com)
     import os as _os
     _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     _hf_ok = False
     try:
-        info("Dang ket noi HuggingFace (hf-mirror.com)...")
+        info("Dang ket noi may chu tai MagicVoice Engine...")
         result = subprocess.run(
             [PY, "-c",
              "from huggingface_hub import snapshot_download; "
@@ -735,18 +731,18 @@ def _download_model():
             creationflags=_CFLAGS,
         )
         if result.returncode == 0:
-            ok("Tai model tu HuggingFace hoan tat!")
+            ok("Tai MagicVoice Engine hoan tat!")
             _hf_ok = True
         else:
-            warn("HuggingFace that bai (returncode != 0)")
+            warn("Tai MagicVoice Engine that bai (returncode != 0)")
     except subprocess.TimeoutExpired:
-        warn("HuggingFace: Qua thoi gian (1 gio)")
+        warn("Tai MagicVoice Engine: Qua thoi gian (1 gio)")
     except Exception as e:
-        warn(f"HuggingFace loi: {e}")
+        warn(f"Tai MagicVoice Engine loi: {e}")
 
     # Thu 2: Google Drive fallback neu HuggingFace loi
     if not _hf_ok:
-        warn("Thu fallback: tai tu Google Drive...")
+        warn("Thu fallback: tai MagicVoice Engine tu Google Drive...")
         _DRIVE_ID   = "13UA5GLL7we60qKJZzJ3wDAWBsG2E242-"
         _DRIVE_NAME = "MagicVoice_model.zip"
         _CACHE_DIR  = str(cache_dir.parent)
@@ -770,13 +766,55 @@ def _download_model():
             warn("Model se duoc tai khi mo app lan dau — bam 'Tai Model'.")
 
 
+def _download_whisper():
+    """Download Whisper model cho Clone Voice. Non-blocking neu that bai."""
+    import pathlib as _pl
+    hf_cache = _pl.Path.home() / ".cache" / "huggingface" / "hub"
+    _whisper_models = [
+        ("models--openai--whisper-large-v3-turbo", "openai/whisper-large-v3-turbo"),
+        ("models--openai--whisper-large-v3",       "openai/whisper-large-v3"),
+        ("models--openai--whisper-base",            "openai/whisper-base"),
+        ("models--openai--whisper-small",           "openai/whisper-small"),
+    ]
+    for _dir_name, _model_id in _whisper_models:
+        if (hf_cache / _dir_name).exists() and any((hf_cache / _dir_name).rglob("*.bin") or
+                                                    (hf_cache / _dir_name).rglob("*.safetensors")):
+            ok(f"Whisper da co trong cache ({_dir_name.split('--')[-1]})")
+            return True
+
+    info("Whisper chua co — dang tai tu HuggingFace (can cho Clone Voice)...")
+    import os as _os
+    _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    for _dir_name, _model_id in _whisper_models:
+        try:
+            result = subprocess.run(
+                [PY, "-c",
+                 f"from huggingface_hub import snapshot_download; "
+                 f"snapshot_download('{_model_id}'); print('Whisper OK')"],
+                timeout=3600,
+                creationflags=_CFLAGS,
+            )
+            if result.returncode == 0:
+                ok(f"Whisper ({_model_id.split('/')[-1]}) tai thanh cong!")
+                return True
+            warn(f"  {_model_id.split('/')[-1]}: returncode={result.returncode}")
+        except subprocess.TimeoutExpired:
+            warn(f"  {_model_id.split('/')[-1]}: timeout 1 gio")
+        except Exception as _e:
+            warn(f"  {_model_id.split('/')[-1]}: {str(_e)[:80]}")
+
+    warn("Khong tai duoc Whisper — Clone Voice se yeu cau internet khi su dung lan dau.")
+    warn("De su dung Clone Voice offline: mo app -> bam 'Tu dong sua moi truong' -> tu tai.")
+    return False
+
+
 def main():
     os.chdir(BASE_DIR)
 
     # ── Header ──────────────────────────────────────────────
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.57{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.58{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
@@ -787,11 +825,11 @@ def main():
     _log(f"Base dir: {BASE_DIR}")
 
     # ── Buoc 0: Prerequisites (VC++ Redist) ─────────────────
-    section("BUOC 0/6 — Moi truong he thong (VC++ Redist)", "0/6")
+    section("BUOC 0/7 — Moi truong he thong (VC++ Redist)", "0/6")
     ensure_prerequisites()
 
     # ── Buoc 1: GPU Detection ────────────────────────────────
-    section("BUOC 1/6 — Phat hien GPU & chon CUDA", "1/6")
+    section("BUOC 1/7 — Phat hien GPU & chon CUDA", "1/6")
     driver_cuda, gpu_name, compute_cap, driver_ver = detect_gpu()
 
     has_gpu = gpu_name is not None
@@ -819,29 +857,50 @@ def main():
 
     info(f"Chon build: {C['Y']}{cuda_desc}{C['X']}")
 
-    # ── Buoc 2: Upgrade pip ──────────────────────────────────
-    section("BUOC 2/6 — Nang cap pip", "2/6")
+    # ── Buoc 2: Upgrade pip + fix numpy ─────────────────────
+    section("BUOC 2/7 — Nang cap pip & fix numpy", "2/6")
     _pip(["install", "--upgrade", "pip"], retries=1)
     ok("pip")
+    # numpy 2.x gap loi tuong thich voi torch/omnivoice — pin 1.26.4
+    info("Pin numpy==1.26.4 (tranh loi tuong thich)...")
+    _pip(["install", "numpy==1.26.4", "--quiet"], retries=2)
+    ok("numpy==1.26.4")
 
-    # ── Buoc 3: PyTorch ─────────────────────────────────────
-    section("BUOC 3/6 — PyTorch", "3/6")
+    # ── Buoc 3: PyTorch TRUOC (giai phap chuan) ──────────────
+    # DUNG CHUAN: cai torch+torchaudio TRUOC, XONG moi cai packages.
+    # Khi omnivoice duoc cai sau, pip thay torch da co → KHONG ghi de.
+    section("BUOC 3/7 — PyTorch", "3/6")
     ensure_torch(index_url, cuda_tag, cuda_desc, has_gpu)
 
-    # ── Buoc 4: Thu vien ────────────────────────────────────
-    section("BUOC 4/6 — Thu vien Python", "4/6")
+    # ── Buoc 4: Thu vien Python (SAU torch) ─────────────────
+    section("BUOC 4/7 — Thu vien Python", "4/6")
     for entry in PACKAGES:
         imp, pip_pkg, extra, required, always_upgrade = entry[:5]
         display = entry[5] if len(entry) > 5 else None
         ensure_package(imp, pip_pkg, extra, required, always_upgrade, display_name=display)
 
+    # Kiem tra torchaudio sau packages — neu omnivoice ghi de → cai lai torch
+    info("Kiem tra torchaudio sau khi cai packages...")
+    _ta_r = subprocess.run(
+        [PY, "-c", "import torchaudio; print('+cu' in torchaudio.__version__)"],
+        capture_output=True, text=True, timeout=20, creationflags=_CFLAGS)
+    if has_gpu and index_url and (_ta_r.returncode != 0 or _ta_r.stdout.strip() != "True"):
+        warn("torchaudio mat CUDA build sau khi cai packages — cai lai torch+torchaudio...")
+        install_torch(index_url, cuda_tag, cuda_desc)
+    else:
+        ok("torchaudio CUDA build hop le")
+
     # ── Buoc 5: ffmpeg ──────────────────────────────────────
-    section("BUOC 5/6 — ffmpeg", "5/6")
+    section("BUOC 5/7 — ffmpeg", "5/7")
     ensure_ffmpeg()
 
     # ── Buoc 6: Download model TTS ──────────────────────────
-    section("BUOC 6/6 — Tai model TTS (k2-fsa/OmniVoice)", "6/6")
+    section("BUOC 6/7 — Tai MagicVoice Engine", "6/7")
     _download_model()
+
+    # ── Buoc 7: Download Whisper (Clone Voice) ───────────────
+    section("BUOC 7/7 — Tai Whisper model (cho Clone Voice)", "7/7")
+    _download_whisper()
 
     # ── Kiem tra cuoi ───────────────────────────────────────
     section("KIEM TRA CUOI — Xac nhan moi truong")
@@ -867,7 +926,6 @@ def main():
                 warn("GPU co mat nhung CUDA khong hoat dong — tu dong thu cai lai...")
                 _retry_builds = [
                     ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
-                    ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
                     ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
                     ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
                 ]
