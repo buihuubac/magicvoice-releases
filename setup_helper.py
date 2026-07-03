@@ -441,7 +441,7 @@ PACKAGES = [
     ("numpy",          "numpy",           [],                       True,  False),
     ("requests",       "requests",        [],                       True,  False),
     ("tqdm",           "tqdm",            [],                       True,  False),
-    ("imageio_ffmpeg", "imageio-ffmpeg",  [],                       True,  True),   # always_upgrade=True da lo upgrade, khong can force-reinstall
+    ("imageio_ffmpeg", "imageio-ffmpeg",  ["--force-reinstall"],    True,  True),   # force-reinstall: tranh ffmpeg binary bi corrupt/thieu (loi pho bien)
     ("sounddevice",    "sounddevice",     [],                       False, False),  # optional
     ("pyaudiowpatch",  "pyaudiowpatch",   [],                       False, False),  # optional
     ("pydub",          "pydub",           [],                       False, False),  # optional
@@ -577,17 +577,22 @@ def ensure_ffmpeg():
         ok("ffmpeg portable")
         return
 
-    # 2. imageio-ffmpeg da cai va co ffmpeg exe hop le
+    # 2. imageio-ffmpeg da cai va ffmpeg binary THUC SU chay duoc
+    # KHONG dung os.path.isfile — file co the ton tai nhung bi corrupt/sai arch/thieu DLL
+    # Phai chay ffmpeg -version de xac nhan hoat dong
     try:
         r = subprocess.run(
             [PY, "-c",
-             "import imageio_ffmpeg, os; p=imageio_ffmpeg.get_ffmpeg_exe(); "
-             "assert os.path.isfile(p)"],
-            capture_output=True, timeout=20, creationflags=_CFLAGS
+             "import imageio_ffmpeg, subprocess, sys; "
+             "p=imageio_ffmpeg.get_ffmpeg_exe(); "
+             "r=subprocess.run([p,'-version'],capture_output=True,timeout=8); "
+             "sys.exit(0 if r.returncode==0 else 1)"],
+            capture_output=True, timeout=30, creationflags=_CFLAGS
         )
         if r.returncode == 0:
-            ok("ffmpeg (qua imageio-ffmpeg)")
+            ok("ffmpeg (qua imageio-ffmpeg — da xac nhan chay duoc)")
             return
+        warn("imageio-ffmpeg co nhung ffmpeg binary loi — se cai lai...")
     except Exception:
         pass
 
@@ -663,12 +668,14 @@ def ensure_ffmpeg():
         )
         r = subprocess.run(
             [PY, "-c",
-             "import imageio_ffmpeg, os; p=imageio_ffmpeg.get_ffmpeg_exe(); "
-             "assert os.path.isfile(p); print(p)"],
-            capture_output=True, text=True, timeout=20, creationflags=_CFLAGS
+             "import imageio_ffmpeg, subprocess, sys; "
+             "p=imageio_ffmpeg.get_ffmpeg_exe(); "
+             "r=subprocess.run([p,'-version'],capture_output=True,timeout=8); "
+             "sys.exit(0 if r.returncode==0 else 1)"],
+            capture_output=True, text=True, timeout=30, creationflags=_CFLAGS
         )
         if r.returncode == 0:
-            ok(f"ffmpeg (imageio-ffmpeg reinstall)")
+            ok("ffmpeg (imageio-ffmpeg reinstall — da xac nhan chay duoc)")
             return
     except Exception:
         pass
