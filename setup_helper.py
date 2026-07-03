@@ -774,9 +774,16 @@ def main():
     os.chdir(BASE_DIR)
 
     # ── Header ──────────────────────────────────────────────
+    _ver_display = "?"
+    try:
+        _vf = os.path.join(BASE_DIR, "version.txt")
+        if os.path.exists(_vf):
+            _ver_display = open(_vf, encoding="utf-8").read().strip() or "?"
+    except Exception:
+        pass
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.54{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v{_ver_display}{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
