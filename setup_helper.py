@@ -363,6 +363,10 @@ def install_torch(index_url, tag, desc):
     if not ok_install:
         return False
 
+    # Go torchvision ngay sau cai torch+torchaudio (truoc khi kiem tra)
+    # Tranh truong hop pip dependency resolver keo torchvision ve trong qua trinh cai
+    _pip(["uninstall", "torchvision", "-y"])
+
     inst, cuda_ok, ver = _torch_status()
     if not inst:
         # Kiem tra co phai loi DLL khong tuong thich (WinError 126)
@@ -1109,11 +1113,10 @@ def main():
     _flush_log()
     bar = "═" * 56
     print(f"\n{C['C']}{bar}{C['X']}")
-    if fail_count == 0 and "torch" not in _fail_list:
-        print(f"{C['G']}{C['BO']}  ✅ CAI DAT HOAN TAT — Khong co loi!{C['X']}")
-        print(f"  Tool san sang su dung.")
-        print(f"{C['C']}{bar}{C['X']}\n")
-        _log("=== THANH CONG ===")
+
+    # Ghi .deps_installed neu torch OK — ke ca optional package fail
+    # Tranh vong lap setup chay lai moi lan mo app chi vi optional package
+    if "torch" not in _fail_list:
         try:
             import pathlib as _pl
             _ver_str = "ok"
@@ -1123,15 +1126,30 @@ def main():
             (_pl.Path(BASE_DIR) / ".deps_installed").write_text(_ver_str)
         except Exception:
             pass
+
+    if fail_count == 0 and "torch" not in _fail_list:
+        print(f"{C['G']}{C['BO']}  ✅ CAI DAT HOAN TAT — Khong co loi!{C['X']}")
+        print(f"  Tool san sang su dung.")
+        print(f"{C['C']}{bar}{C['X']}\n")
+        _log("=== THANH CONG ===")
         return 0
-    else:
-        msg = f"CANH BAO: {fail_count} goi chua cai duoc"
+    elif "torch" not in _fail_list:
+        msg = f"CANH BAO: {fail_count} goi phu chua cai duoc (app van chay duoc)"
         if _fail_list:
             msg += f" ({', '.join(_fail_list)})"
         print(f"{C['Y']}{C['BO']}  ⚠ {msg}{C['X']}")
-        print(f"  Xem chi tiet: install_log.txt")
+        print(f"  App van hoat dong binh thuong. Xem chi tiet: install_log.txt")
         print(f"{C['C']}{bar}{C['X']}\n")
         _log(f"=== XONG VOI CANH BAO: {msg} ===", "warn")
+        return 0  # Tra 0 de bao hieu thanh cong (torch OK, app chay duoc)
+    else:
+        msg = f"LOI NGHIEM TRONG: torch/core package that bai"
+        if _fail_list:
+            msg += f" ({', '.join(_fail_list)})"
+        print(f"{C['R']}{C['BO']}  ✗ {msg}{C['X']}")
+        print(f"  Xem chi tiet: install_log.txt")
+        print(f"{C['C']}{bar}{C['X']}\n")
+        _log(f"=== LOI: {msg} ===", "error")
         return 1
 
 

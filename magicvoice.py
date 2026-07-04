@@ -1,4 +1,4 @@
-# magicvoice.py — Entry point cho MagicVoice TTS Studio
+# magicvoice.py — Entry point cho MagicVoice TTS Studio v3.59
 if __name__ == "__main__":
     # Hien splash TRUOC khi import module nang (torch/torchaudio mat 30-60s)
     import tkinter as _tk
@@ -23,23 +23,9 @@ if __name__ == "__main__":
     _base = _os.path.dirname(_os.path.abspath(__file__))
     _log  = _os.path.join(_base, "error_log.txt")
 
-    # ── Auto-setup sau khi update ──────────────────────────────
-    # So sanh version.txt vs .deps_installed
-    # Neu khac nhau (vua update) → tu dong chay setup_helper.py
-    try:
-        _ver_file  = _os.path.join(_base, "version.txt")
-        _deps_file = _os.path.join(_base, ".deps_installed")
-        _cur_ver   = open(_ver_file,  encoding="utf-8").read().strip() if _os.path.exists(_ver_file)  else ""
-        _dep_ver   = open(_deps_file, encoding="utf-8").read().strip() if _os.path.exists(_deps_file) else ""
-        if _cur_ver and _dep_ver != _cur_ver:
-            _status_lbl.config(text=f"Cap nhat v{_cur_ver} — dang cai dat...")
-            _splash.update()
-            _setup = _os.path.join(_base, "setup_helper.py")
-            if _os.path.exists(_setup):
-                _sp.run([_sys.executable, _setup], timeout=3600)
-    except Exception:
-        pass  # Neu setup that bai, app van khoi dong binh thuong
-    # ──────────────────────────────────────────────────────────
+    # NOTE: Khong tu dong chay setup khi co update — chi chay setup khi PYD that su loi.
+    # Neu update chi la thay file Python/config → PYD van load OK → app chay binh thuong.
+    # setup_helper chi chay khi PYD import that bai (DLL, ImportError...).
 
     _status_lbl.config(text="Dang tai module chinh...")
     _splash.update()
@@ -74,6 +60,8 @@ if __name__ == "__main__":
                 _splash.update()
                 _sp.run([_sys.executable, "-m", "pip", "uninstall", "torchvision", "-y"],
                         capture_output=True, timeout=60)
+                _sp.run([_sys.executable, "-m", "pip", "cache", "purge"],
+                        capture_output=True, timeout=30)
             except Exception:
                 pass
 
@@ -83,8 +71,7 @@ if __name__ == "__main__":
         """Cac loi co the tu sua bang chay lai setup_helper: DLL, ImportError, thieu package."""
         _msg = str(exc).lower()
         _type = type(exc).__name__
-        # Loi torchvision (circular import, entry point) da duoc xu ly o buoc tren
-        # → khong trigger full reinstall
+        # Loi torchvision da duoc xu ly o buoc tren → khong trigger full reinstall
         if "torchvision" in _msg:
             return False
         if "winerror 126" in _msg or "dll load failed" in _msg:
@@ -99,6 +86,16 @@ if __name__ == "__main__":
 
     try:
         from magicvoice_core import _main_entry
+        # PYD load thanh cong — cap nhat .deps_installed voi version hien tai
+        try:
+            _ver_file  = _os.path.join(_base, "version.txt")
+            _deps_file = _os.path.join(_base, ".deps_installed")
+            _cur_ver   = open(_ver_file, encoding="utf-8").read().strip() if _os.path.exists(_ver_file) else ""
+            if _cur_ver:
+                open(_deps_file, "w", encoding="utf-8").write(_cur_ver)
+        except Exception:
+            pass
+        # Xoa repair_lock neu con tu lan cu
         if _os.path.exists(_repair_lock):
             try: _os.remove(_repair_lock)
             except Exception: pass
