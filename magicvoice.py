@@ -97,15 +97,31 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Neu model da trong cache → dung offline mode, tranh HF API timeout khi load PYD
+    # Kiem tra model va set offline mode — gop 1 block de tranh loi bien chua dinh nghia
+    # Fix v3.61: khach co torch+torchvision OK nhung model chua download
+    # → torchvision check tren bo qua setup_helper → model khong bao gio duoc tai
     try:
         import pathlib as _pl2
         _hf_model = _pl2.Path.home() / ".cache" / "huggingface" / "hub" / "models--k2-fsa--OmniVoice"
-        if _hf_model.exists() and any(
-            list(_hf_model.rglob("*.safetensors")) +
-            list(_hf_model.rglob("*.bin")) +
-            list(_hf_model.rglob("*.pt"))
-        ):
+
+        def _has_model_files():
+            return _hf_model.exists() and any(
+                list(_hf_model.rglob("*.safetensors")) +
+                list(_hf_model.rglob("*.bin")) +
+                list(_hf_model.rglob("*.pt"))
+            )
+
+        if not _has_model_files():
+            # Model chua co → chay setup_helper (step 6: _download_model se xu ly)
+            _setup_dl = _os.path.join(_base, "setup_helper.py")
+            if _os.path.exists(_setup_dl):
+                _status_lbl.config(text="Dang tai MagicVoice Engine (lan dau ~10-30 phut)...")
+                _splash.update()
+                _sp.run([_sys.executable, _setup_dl],
+                        creationflags=_sp.CREATE_NEW_CONSOLE, timeout=3600)
+
+        # Set offline mode neu model co trong cache (kiem tra lai sau khi setup xong)
+        if _has_model_files():
             import os as _os2
             _os2.environ["HF_HUB_OFFLINE"] = "1"
     except Exception:
