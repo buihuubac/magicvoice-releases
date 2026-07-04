@@ -282,26 +282,22 @@ echo   [v] Thu vien: Hoan thanh
 :: =========================================================
 echo.
 echo  [BUOC 5/6] Kiem tra model MagicVoice Engine...
-echo   (Lan dau co the mat 5-15 phut - KHONG dong cua so nay)
 
-:: Thu HuggingFace chinh thuc
-!PY311! -c "from huggingface_hub import snapshot_download; snapshot_download('k2-fsa/OmniVoice',ignore_patterns=['*.onnx'])" >nul 2>&1
+:: Check cache truoc - neu model da co tu ban cu thi khong can tai lai
+!PY311! -c "import pathlib; c=pathlib.Path.home()/'.cache'/'huggingface'/'hub'/'models--k2-fsa--OmniVoice'; found=c.exists() and any(list(c.rglob('*.safetensors'))+list(c.rglob('*.bin'))+list(c.rglob('*.pt'))); exit(0 if found else 1)" >nul 2>&1
 if not errorlevel 1 (
-    echo   [v] Model da co / tai xong (HuggingFace)
+    echo   [v] Model da co trong cache - giu nguyen, khong tai lai
     goto :model_done
 )
 
-:: Thu mirror hf-mirror.com
-echo   [!] HuggingFace chinh that bai - thu mirror hf-mirror.com...
-set "HF_ENDPOINT=https://hf-mirror.com"
-!PY311! -c "from huggingface_hub import snapshot_download; snapshot_download('k2-fsa/OmniVoice',ignore_patterns=['*.onnx'])" >nul 2>&1
-if not errorlevel 1 (
-    set "HF_ENDPOINT="
-    echo   [v] Model tai xong tu mirror
-    goto :model_done
+:: Chua co model - goi setup_helper.py (tu dong thu GitHub → HuggingFace → mirror)
+echo   (Lan dau co the mat 5-30 phut tuy toc do mang - KHONG dong cua so nay)
+!PY311! -c "import sys; sys.path.insert(0, r'%~dp0'); from setup_helper import _download_model; _download_model()"
+if errorlevel 1 (
+    echo   [!] Khong tai duoc model ngay bay gio - app se tu tai khi chay lan dau
+) else (
+    echo   [v] Model sẵn sang
 )
-set "HF_ENDPOINT="
-echo   [!] Khong tai duoc model ngay bay gio - app se tu tai khi chay lan dau
 
 :model_done
 
