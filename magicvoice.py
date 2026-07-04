@@ -59,6 +59,25 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    # Kiem tra torch version — neu sai (khong phai 2.8.x) thi chay setup truoc, tranh PYD
+    # tu dong bat dialog "Tu dong sua" moi lan user dung Clone Voice / load model.
+    # Chay VISIBLE (CREATE_NEW_CONSOLE) de user biet va khong tat app giua chung.
+    try:
+        _tr = _sp.run(
+            [_sys.executable, "-c", "import torch; print(torch.__version__)"],
+            capture_output=True, text=True, timeout=30
+        )
+        _tv = _tr.stdout.strip().split("+")[0] if _tr.returncode == 0 else ""
+        if not _tv.startswith("2.8"):
+            _setup_pre = _os.path.join(_base, "setup_helper.py")
+            if _os.path.exists(_setup_pre):
+                _status_lbl.config(text="Nang cap moi truong (lan dau, vui long cho)...")
+                _splash.update()
+                _sp.run([_sys.executable, _setup_pre],
+                        creationflags=_sp.CREATE_NEW_CONSOLE, timeout=3600)
+    except Exception:
+        pass
+
     # Neu model da trong cache → dung offline mode, tranh HF API timeout khi load PYD
     try:
         import pathlib as _pl2
