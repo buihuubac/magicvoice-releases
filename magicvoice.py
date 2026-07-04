@@ -86,6 +86,13 @@ if __name__ == "__main__":
 
     try:
         from magicvoice_core import _main_entry
+        # Go _NoTorchvision guard khoi sys.meta_path sau khi PYD da load xong
+        # Guard nay chi can thiet trong luc PYD import — sau do Clone Voice can dung torchvision
+        try:
+            _sys.meta_path[:] = [m for m in _sys.meta_path
+                                  if type(m).__name__ != '_NoTorchvision']
+        except Exception:
+            pass
         # PYD load thanh cong — cap nhat .deps_installed voi version hien tai
         try:
             _ver_file  = _os.path.join(_base, "version.txt")

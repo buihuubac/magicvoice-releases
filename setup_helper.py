@@ -363,10 +363,6 @@ def install_torch(index_url, tag, desc):
     if not ok_install:
         return False
 
-    # Go torchvision ngay sau cai torch+torchaudio (truoc khi kiem tra)
-    # Tranh truong hop pip dependency resolver keo torchvision ve trong qua trinh cai
-    _pip(["uninstall", "torchvision", "-y"])
-
     inst, cuda_ok, ver = _torch_status()
     if not inst:
         # Kiem tra co phai loi DLL khong tuong thich (WinError 126)
@@ -1094,21 +1090,26 @@ def main():
                     warn("Khi mo app: bam 'Tai Model' → tool se tu dong sua them.")
 
     # ── Tong ket ────────────────────────────────────────────
-    # ===== BUOC CUOI CUNG: go torchvision (app khong dung) =====
-    # Phai o day — SAU moi buoc cai torch/torchaudio/packages — de khong bi keo lai
-    info("Xoa pip cache (tranh torchvision cu quay lai tu cache)...")
+    # ===== BUOC CUOI CUNG: dam bao torchvision dung version =====
+    # torchvision 0.21.0 tuong thich voi torch 2.8.0 — Clone Voice can torchvision
+    # Xoa cache truoc de khong lay lai ban cu bi hong
+    info("Xoa pip cache truoc khi cai torchvision...")
     _pip(["cache", "purge"])
-    info("Go torchvision lan cuoi (app khong dung - tranh circular import)...")
-    _pip(["uninstall", "torchvision", "-y"])
-    # Don folder rac ~* (invalid distribution tu lan cai do dang)
+    # Don folder rac ~* (invalid distribution)
     try:
         import glob as _gl, shutil as _sh, site as _st
-        for _sp in (_st.getsitepackages() or []) + [_st.getusersitepackages()]:
-            for _junk in _gl.glob(os.path.join(_sp, "~*")):
+        for _sp2 in (_st.getsitepackages() or []) + [_st.getusersitepackages()]:
+            for _junk in _gl.glob(os.path.join(_sp2, "~*")):
                 _sh.rmtree(_junk, ignore_errors=True)
     except Exception:
         pass
-    ok("torchvision da go (buoc cuoi) + don rac ~*")
+    info("Cai torchvision==0.21.0 (tuong thich voi torch 2.8.0, can cho Clone Voice)...")
+    if index_url:
+        _pip(["install", "torchvision==0.21.0", "--index-url", index_url, "--force-reinstall", "--no-deps"])
+    else:
+        _pip(["install", "torchvision==0.21.0", "--index-url", "https://download.pytorch.org/whl/cpu",
+              "--force-reinstall", "--no-deps"])
+    ok("torchvision==0.21.0 da cai (tuong thich torch 2.8.0)")
 
     _flush_log()
     bar = "═" * 56
