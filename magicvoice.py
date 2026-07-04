@@ -30,16 +30,32 @@ if __name__ == "__main__":
     _status_lbl.config(text="Dang tai module chinh...")
     _splash.update()
 
-    # Xoa magicvoice_core.py neu ton tai — file nay do update mechanism tao ra
-    # chua binary PYD data → null bytes → Python import .py truoc .pyd → crash
+    # Bao ve: PYD update mechanism tao ra magicvoice_core.py → Python import .py truoc .pyd → crash
+    # Fix 1: Xoa file .py/.pyc + invalidate_caches (don dep tu lan truoc)
+    # Fix 2: Cai PydFirst finder → luon load tu .pyd bat ke .py co ton tai hay khong
     try:
-        import glob as _gl
+        import glob as _gl, importlib as _il, importlib.util as _ilu
+
         _core_py = _os.path.join(_base, "magicvoice_core.py")
         if _os.path.exists(_core_py):
-            _os.remove(_core_py)
+            try: _os.remove(_core_py)
+            except Exception: pass
         for _pyc in _gl.glob(_os.path.join(_base, "__pycache__", "magicvoice_core*")):
             try: _os.remove(_pyc)
             except Exception: pass
+        _il.invalidate_caches()
+
+        _pyd_path = _os.path.join(_base, "magicvoice_core.cp311-win_amd64.pyd")
+
+        class _PydFirst:
+            def find_spec(self, fullname, path, target=None):
+                if fullname != "magicvoice_core":
+                    return None
+                if _os.path.exists(_pyd_path):
+                    return _ilu.spec_from_file_location(fullname, _pyd_path)
+                return None
+
+        _sys.meta_path.insert(0, _PydFirst())
     except Exception:
         pass
 
