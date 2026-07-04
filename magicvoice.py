@@ -78,6 +78,25 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    # Kiem tra torchvision — Clone Voice can torchvision==0.23.x
+    # Neu chua co hoac sai version (khi update tu ban cu) → chay setup_helper de cai
+    try:
+        _tv2 = _sp.run(
+            [_sys.executable, "-c",
+             "import torchvision; print(torchvision.__version__)"],
+            capture_output=True, text=True, timeout=20
+        )
+        _tv_installed = _tv2.stdout.strip().split("+")[0] if _tv2.returncode == 0 else ""
+        if not _tv_installed.startswith("0.23"):
+            _setup_tv = _os.path.join(_base, "setup_helper.py")
+            if _os.path.exists(_setup_tv):
+                _status_lbl.config(text="Cap nhat torchvision cho Clone Voice...")
+                _splash.update()
+                _sp.run([_sys.executable, _setup_tv],
+                        creationflags=_sp.CREATE_NEW_CONSOLE, timeout=3600)
+    except Exception:
+        pass
+
     # Neu model da trong cache → dung offline mode, tranh HF API timeout khi load PYD
     try:
         import pathlib as _pl2
@@ -147,6 +166,15 @@ if __name__ == "__main__":
         if _os.path.exists(_repair_lock):
             try: _os.remove(_repair_lock)
             except Exception: pass
+        # Remove _NoTorchvision guard sau khi PYD da load xong.
+        # PYD cai guard nay vao sys.meta_path trong __init__; guard block moi import torchvision.
+        # Clone Voice (trong PYD) can torchvision → import bi chan → "torchvision disabled" → loop.
+        # Sau khi PYD load xong, ta co the xoa guard de torchvision import binh thuong.
+        try:
+            _sys.meta_path = [_x for _x in _sys.meta_path
+                              if type(_x).__name__ not in ("_NoTorchvision", "_BlockTorchvision")]
+        except Exception:
+            pass
     except Exception as _e:
         if _needs_reinstall(_e):
             if _os.path.exists(_repair_lock):

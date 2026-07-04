@@ -955,7 +955,7 @@ def main():
     # ── Header ──────────────────────────────────────────────
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.58{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.60{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
@@ -1104,12 +1104,23 @@ def main():
                     warn("Khi mo app: bam 'Tai Model' → tool se tu dong sua them.")
 
     # ── Tong ket ────────────────────────────────────────────
-    # ===== BUOC CUOI CUNG: go torchvision (app khong dung truc tiep) =====
-    # Phai o cuoi — SAU moi buoc cai — de khong bi keo lai boi dependency
-    info("Xoa pip cache (tranh torchvision cu quay lai tu cache)...")
+    # ===== BUOC CUOI CUNG: dam bao torchvision dung version cho Clone Voice =====
+    # Clone Voice (trong PYD) can torchvision de load model anh.
+    # Neu torchvision sai version / khong co → PYD bao "torchvision disabled" → loop.
+    # Fix: cai torchvision==0.23.0 tu dung index (tuong thich torch 2.8.0).
+    info("Xoa pip cache (tranh torchvision cu gay loi)...")
     _pip(["cache", "purge"])
-    info("Go torchvision (app dung PYD truc tiep, khong can torchvision ngoai)...")
-    _pip(["uninstall", "torchvision", "-y"])
+    info("Cai torchvision==0.23.0 (can cho Clone Voice)...")
+    if index_url and "cu" in cuda_tag:
+        _tv_ok = _pip(["install", "torchvision==0.23.0",
+                        "--index-url", index_url, "--no-deps"], timeout=600)
+    else:
+        # CPU fallback
+        _tv_ok = _pip(["install", "torchvision==0.23.0", "--no-deps"], timeout=600)
+    if _tv_ok:
+        ok("torchvision==0.23.0 — OK")
+    else:
+        warn("torchvision cai khong duoc — Clone Voice co the gap loi khi load model anh")
     # Don folder rac ~* (invalid distribution tu lan cai do dang)
     try:
         import glob as _gl, shutil as _sh, site as _st
@@ -1118,7 +1129,7 @@ def main():
                 _sh.rmtree(_junk, ignore_errors=True)
     except Exception:
         pass
-    ok("torchvision da go (buoc cuoi) + don rac ~*")
+    ok("Buoc cuoi hoan tat + don rac ~*")
 
     _flush_log()
     bar = "═" * 56
