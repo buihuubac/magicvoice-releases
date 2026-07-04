@@ -240,10 +240,11 @@ PY = sys.executable
 
 def _pip(args, timeout=360, retries=2):
     """Chay pip voi retry. Tra ve True neu OK."""
-    cmd = [PY, "-m", "pip"] + args + [
-        "--quiet", "--no-warn-script-location",
-        "--disable-pip-version-check"
-    ]
+    # --no-warn-script-location chi hop le voi 'pip install', khong dung cho uninstall/cache
+    _extra = ["--quiet", "--disable-pip-version-check"]
+    if args and args[0] == "install":
+        _extra.append("--no-warn-script-location")
+    cmd = [PY, "-m", "pip"] + args + _extra
     for attempt in range(retries + 1):
         try:
             r = subprocess.run(
@@ -322,26 +323,39 @@ def can_import(module):
 # PYTORCH CHECK + INSTALL
 # ─────────────────────────────────────────────────────────
 def _torch_status():
-    """Tra ve (installed, cuda_avail, version_str) hoac (False,False,None)."""
+    """Tra ve (installed, cuda_avail, version_str) hoac (False,False,None).
+    Tach 2 buoc: (1) kiem tra torch co import duoc + lay version;
+                 (2) kiem tra CUDA rieng — khong anh huong ket qua "installed".
+    Tranh truong hop torch.cuda.is_available() raise exception → bao nham la chua cai.
+    """
+    # Buoc 1: chi import va lay version
     try:
         r = subprocess.run(
-            [PY, "-c",
-             "import torch; "
-             "c=torch.cuda.is_available(); "
-             "g=torch.cuda.get_device_name(0) if c else 'none'; "
-             "print(torch.__version__, c, g)"],
+            [PY, "-c", "import torch; print(torch.__version__)"],
             capture_output=True, text=True, timeout=60,
             creationflags=_CFLAGS
         )
-        if r.returncode != 0:
+        if r.returncode != 0 or not r.stdout.strip():
             return False, False, None
-        parts = r.stdout.strip().split(" ", 2)
-        ver      = parts[0] if len(parts) > 0 else "?"
-        cuda_ok  = parts[1].lower() == "true" if len(parts) > 1 else False
-        gpu_name = parts[2] if len(parts) > 2 else ""
-        return True, cuda_ok, ver
+        ver = r.stdout.strip().splitlines()[0].strip()
     except Exception:
         return False, False, None
+
+    # Buoc 2: kiem tra CUDA (rieng, khong lam thi "installed" sai)
+    cuda_ok = False
+    try:
+        r2 = subprocess.run(
+            [PY, "-c",
+             "import torch; print('yes' if torch.cuda.is_available() else 'no')"],
+            capture_output=True, text=True, timeout=30,
+            creationflags=_CFLAGS
+        )
+        if r2.returncode == 0:
+            cuda_ok = r2.stdout.strip().lower() == "yes"
+    except Exception:
+        pass
+
+    return True, cuda_ok, ver
 
 def install_torch(index_url, tag, desc):
     """Gỡ torch cũ rồi cài đúng version. Trả về True nếu thành công."""
