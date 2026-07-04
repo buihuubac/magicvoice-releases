@@ -30,6 +30,19 @@ if __name__ == "__main__":
     _status_lbl.config(text="Dang tai module chinh...")
     _splash.update()
 
+    # Xoa magicvoice_core.py neu ton tai — file nay do update mechanism tao ra
+    # chua binary PYD data → null bytes → Python import .py truoc .pyd → crash
+    try:
+        import glob as _gl
+        _core_py = _os.path.join(_base, "magicvoice_core.py")
+        if _os.path.exists(_core_py):
+            _os.remove(_core_py)
+        for _pyc in _gl.glob(_os.path.join(_base, "__pycache__", "magicvoice_core*")):
+            try: _os.remove(_pyc)
+            except Exception: pass
+    except Exception:
+        pass
+
     # Neu model da trong cache → dung offline mode, tranh HF API timeout khi load PYD
     try:
         import pathlib as _pl2
@@ -86,13 +99,6 @@ if __name__ == "__main__":
 
     try:
         from magicvoice_core import _main_entry
-        # Go _NoTorchvision guard khoi sys.meta_path sau khi PYD da load xong
-        # Guard nay chi can thiet trong luc PYD import — sau do Clone Voice can dung torchvision
-        try:
-            _sys.meta_path[:] = [m for m in _sys.meta_path
-                                  if type(m).__name__ != '_NoTorchvision']
-        except Exception:
-            pass
         # PYD load thanh cong — cap nhat .deps_installed voi version hien tai
         try:
             _ver_file  = _os.path.join(_base, "version.txt")

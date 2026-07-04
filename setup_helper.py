@@ -1090,12 +1090,13 @@ def main():
                     warn("Khi mo app: bam 'Tai Model' → tool se tu dong sua them.")
 
     # ── Tong ket ────────────────────────────────────────────
-    # ===== BUOC CUOI CUNG: dam bao torchvision dung version =====
-    # torchvision 0.21.0 tuong thich voi torch 2.8.0 — Clone Voice can torchvision
-    # Xoa cache truoc de khong lay lai ban cu bi hong
-    info("Xoa pip cache truoc khi cai torchvision...")
+    # ===== BUOC CUOI CUNG: go torchvision (app khong dung truc tiep) =====
+    # Phai o cuoi — SAU moi buoc cai — de khong bi keo lai boi dependency
+    info("Xoa pip cache (tranh torchvision cu quay lai tu cache)...")
     _pip(["cache", "purge"])
-    # Don folder rac ~* (invalid distribution)
+    info("Go torchvision (app dung PYD truc tiep, khong can torchvision ngoai)...")
+    _pip(["uninstall", "torchvision", "-y"])
+    # Don folder rac ~* (invalid distribution tu lan cai do dang)
     try:
         import glob as _gl, shutil as _sh, site as _st
         for _sp2 in (_st.getsitepackages() or []) + [_st.getusersitepackages()]:
@@ -1103,13 +1104,7 @@ def main():
                 _sh.rmtree(_junk, ignore_errors=True)
     except Exception:
         pass
-    info("Cai torchvision==0.21.0 (tuong thich voi torch 2.8.0, can cho Clone Voice)...")
-    if index_url:
-        _pip(["install", "torchvision==0.21.0", "--index-url", index_url, "--force-reinstall", "--no-deps"])
-    else:
-        _pip(["install", "torchvision==0.21.0", "--index-url", "https://download.pytorch.org/whl/cpu",
-              "--force-reinstall", "--no-deps"])
-    ok("torchvision==0.21.0 da cai (tuong thich torch 2.8.0)")
+    ok("torchvision da go (buoc cuoi) + don rac ~*")
 
     _flush_log()
     bar = "═" * 56
