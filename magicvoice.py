@@ -58,41 +58,84 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    def _is_torch_dll_error(e):
-        """Kiem tra loi co phai do torch DLL khong tuong thich (WinError 126)."""
-        _msg = str(e).lower()
-        return "winerror 126" in _msg and ("torch" in _msg or "c10" in _msg or "cuda" in _msg)
+    # Go torchvision neu gay loi tuong thich — app khong dung torchvision
+    # Lam truoc khi import PYD, khong can restart
+    try:
+        import torchvision as _tv_test
+        del _tv_test
+    except ImportError:
+        pass  # Chua cai → OK
+    except Exception as _tv_err:
+        _tv_msg = str(_tv_err).lower()
+        if any(k in _tv_msg for k in
+               ("circular import", "cannot import name", "entry point", "winerror 126", "dll")):
+            try:
+                _status_lbl.config(text="Go torchvision loi — dang xu ly...")
+                _splash.update()
+                _sp.run([_sys.executable, "-m", "pip", "uninstall", "torchvision", "-y"],
+                        capture_output=True, timeout=60)
+            except Exception:
+                pass
+
+    _repair_lock = _os.path.join(_base, ".repair_lock")
+
+    def _needs_reinstall(exc):
+        """Cac loi co the tu sua bang chay lai setup_helper: DLL, ImportError, thieu package."""
+        _msg = str(exc).lower()
+        _type = type(exc).__name__
+        # Loi torchvision (circular import, entry point) da duoc xu ly o buoc tren
+        # → khong trigger full reinstall
+        if "torchvision" in _msg:
+            return False
+        if "winerror 126" in _msg or "dll load failed" in _msg:
+            return True
+        if _type in ("ImportError", "ModuleNotFoundError"):
+            return True
+        _pkgs = ("torch", "torchaudio", "transformers",
+                 "k2", "onnx", "numpy", "scipy", "librosa", "soundfile")
+        if any(p in _msg for p in _pkgs):
+            return True
+        return False
 
     try:
         from magicvoice_core import _main_entry
+        if _os.path.exists(_repair_lock):
+            try: _os.remove(_repair_lock)
+            except Exception: pass
     except Exception as _e:
-        # ── Fix v3.58: tu dong sua khi torch DLL loi (WinError 126) ──────────
-        if _is_torch_dll_error(_e):
-            try:
-                _splash.destroy()
-            except Exception:
-                pass
-            import tkinter as _tk3
-            _r3 = _tk3.Tk(); _r3.withdraw()
-            _ans = _tk3.messagebox.askyesno(
-                "Loi Torch DLL",
-                "Phat hien loi torch khong tuong thich voi may tinh nay.\n\n"
-                "Nhan YES de tu dong sua va khoi dong lai app.\n"
-                "Qua trinh co the mat 5-10 phut.\n\n"
-                "Nhan NO de thoat.")
-            _r3.destroy()
-            if _ans:
-                _setup2 = _os.path.join(_base, "setup_helper.py")
-                if _os.path.exists(_setup2):
-                    # Xoa .deps_installed de setup chay lai day du
-                    _deps2 = _os.path.join(_base, ".deps_installed")
-                    try: _os.remove(_deps2)
-                    except Exception: pass
-                    _sp.run([_sys.executable, _setup2], timeout=3600)
-                # Khoi dong lai app sau khi sua
-                _sp.Popen([_sys.executable, _os.path.abspath(__file__)])
+        if _needs_reinstall(_e):
+            if _os.path.exists(_repair_lock):
+                # Da tu sua roi nhung van loi → bao loi va thoat
+                try: _os.remove(_repair_lock)
+                except Exception: pass
+                try: _splash.destroy()
+                except Exception: pass
+                with open(_log, "w", encoding="utf-8") as _f:
+                    _f.write(_tb.format_exc())
+                import tkinter as _tk2
+                _r = _tk2.Tk(); _r.withdraw()
+                _tk2.messagebox.showerror(
+                    "Loi Khoi Dong",
+                    f"Da tu sua nhung van loi:\n{_e}\n\n"
+                    f"Vui long lien he ho tro: Zalo 0985 483 623\n"
+                    f"Hoac xem log: {_log}")
+                _r.destroy()
+                _sys.exit(1)
+            # Chua thu sua → tu dong sua va restart (khong can hoi)
+            try: open(_repair_lock, "w").close()
+            except Exception: pass
+            _deps2 = _os.path.join(_base, ".deps_installed")
+            try: _os.remove(_deps2)
+            except Exception: pass
+            _setup2 = _os.path.join(_base, "setup_helper.py")
+            _status_lbl.config(text="Phat hien loi — dang tu dong sua...")
+            _splash.update()
+            if _os.path.exists(_setup2):
+                _sp.run([_sys.executable, _setup2],
+                        creationflags=_sp.CREATE_NEW_CONSOLE, timeout=3600)
+            _sp.Popen([_sys.executable, _os.path.abspath(__file__)])
             _sys.exit(0)
-        # ── Loi khac: hien dialog thong thuong ───────────────────────────────
+        # Loi khong the tu sua → hien dialog thong thuong
         try: _splash.destroy()
         except Exception: pass
         with open(_log, "w", encoding="utf-8") as _f:

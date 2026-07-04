@@ -447,7 +447,6 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 PACKAGES = [
     # (import_name, pip_package, extra_pip_args, required, always_upgrade)
     # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
-    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
     ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
@@ -699,7 +698,6 @@ def ensure_ffmpeg():
 VERIFY_IMPORTS = [
     ("torch",           "PyTorch"),
     ("torchaudio",      "torchaudio"),
-    ("omnivoice",       "MagicVoice Engine"),
     ("huggingface_hub", "huggingface-hub"),
     ("firebase_admin",  "firebase-admin"),
     ("edge_tts",        "edge-tts"),
@@ -1025,12 +1023,6 @@ def main():
         display = entry[5] if len(entry) > 5 else None
         ensure_package(imp, pip_pkg, extra, required, always_upgrade, display_name=display)
 
-    # Sau khi cai packages: gỡ torchvision neu omnivoice/pip keo vao
-    # torchvision compiled voi torch cu → Entry Point Not Found khi load
-    info("Go torchvision neu packages keo vao (app khong dung torchvision)...")
-    _pip(["uninstall", "torchvision", "-y"])
-    ok("torchvision da go (tranh Entry Point Not Found)")
-
     # Kiem tra torchaudio — neu omnivoice keo CPU build ve → chi cai lai torchaudio (KHONG cai lai torch)
     if has_gpu and index_url:
         _ta_r = subprocess.run(
@@ -1098,6 +1090,22 @@ def main():
                     warn("Khi mo app: bam 'Tai Model' → tool se tu dong sua them.")
 
     # ── Tong ket ────────────────────────────────────────────
+    # ===== BUOC CUOI CUNG: go torchvision (app khong dung) =====
+    # Phai o day — SAU moi buoc cai torch/torchaudio/packages — de khong bi keo lai
+    info("Xoa pip cache (tranh torchvision cu quay lai tu cache)...")
+    _pip(["cache", "purge"])
+    info("Go torchvision lan cuoi (app khong dung - tranh circular import)...")
+    _pip(["uninstall", "torchvision", "-y"])
+    # Don folder rac ~* (invalid distribution tu lan cai do dang)
+    try:
+        import glob as _gl, shutil as _sh, site as _st
+        for _sp in (_st.getsitepackages() or []) + [_st.getusersitepackages()]:
+            for _junk in _gl.glob(os.path.join(_sp, "~*")):
+                _sh.rmtree(_junk, ignore_errors=True)
+    except Exception:
+        pass
+    ok("torchvision da go (buoc cuoi) + don rac ~*")
+
     _flush_log()
     bar = "═" * 56
     print(f"\n{C['C']}{bar}{C['X']}")
