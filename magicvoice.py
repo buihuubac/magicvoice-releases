@@ -1,4 +1,4 @@
-# magicvoice.py — Entry point cho MagicVoice TTS Studio v3.59
+# magicvoice.py — Entry point cho MagicVoice TTS Studio v3.60
 if __name__ == "__main__":
     # Hien splash TRUOC khi import module nang (torch/torchaudio mat 30-60s)
     import tkinter as _tk
@@ -111,7 +111,7 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Go torchvision neu gay loi tuong thich — app khong dung torchvision
+    # Kiem tra torchvision co load OK khong — neu DLL loi thi go (se duoc cai lai lan sau)
     # Lam truoc khi import PYD, khong can restart
     try:
         import torchvision as _tv_test

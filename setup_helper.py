@@ -1095,6 +1095,9 @@ def main():
                         _, cuda_ok2, ver2 = _torch_status()
                         if cuda_ok2:
                             ok(f"PyTorch {ver2} — CUDA OK sau retry!")
+                            # Cap nhat index_url/cuda_tag de BUOC CUOI cai torchvision dung build
+                            index_url = _url
+                            cuda_tag  = _tag
                             break
                         warn(f"  {_desc}: torch cai OK nhung CUDA van khong nhan")
                 else:
