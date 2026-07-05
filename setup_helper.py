@@ -347,13 +347,13 @@ def install_torch(index_url, tag, desc):
     """Gỡ torch cũ rồi cài đúng version. Trả về True nếu thành công."""
     info(f"Đang cài PyTorch ({desc})...")
     info("Gỡ phiên bản cũ nếu có...")
-    _pip(["uninstall", "torch", "torchvision", "torchaudio", "-y"])
+    _pip(["uninstall", "torch", "torchvision", "torchaudio", "torchcodec", "-y"])
     time.sleep(1)
 
     info("Tải PyTorch (~2-3 GB lần đầu) — KHÔNG đóng cửa sổ, đang chạy ngầm...")
     extra = ["--index-url", index_url] if index_url else []
     ok_install = _pip_with_dots(
-        ["install", "torch", "torchvision", "torchaudio"] + extra,
+        ["install", "torch", "torchaudio"] + extra,
         timeout=1200, retries=1
     )
     if not ok_install:
@@ -414,7 +414,7 @@ def ensure_torch(index_url, tag, desc, has_gpu):
                     return True
         # Het CUDA → thu CPU
         warn("Tat ca CUDA that bai — thu CPU fallback...")
-        if install_torch(None, "cpu", "CPU fallback"):
+        if install_torch("https://download.pytorch.org/whl/cpu", "cpu", "CPU fallback"):
             ok("PyTorch (CPU fallback)")
             return True
 

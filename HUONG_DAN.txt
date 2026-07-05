@@ -1,5 +1,5 @@
 ╔══════════════════════════════════════════════════════════╗
-║       MAGICVOICE TTS STUDIO v3.60 — HUONG DAN SU DUNG   ║
+║       MAGICVOICE TTS STUDIO v3.44 — HUONG DAN SU DUNG   ║
 ╚══════════════════════════════════════════════════════════╝
 
 CAI DAT LAN DAU (mat 10-20 phut)

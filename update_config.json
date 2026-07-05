@@ -7,7 +7,6 @@
     "setup_helper.py":   "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/setup_helper.py",
     "script_processor.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/script_processor.py",
     "magicvoice_core.cp311-win_amd64.pyd.new": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/magicvoice_core.cp311-win_amd64.pyd",
-    "ghep_video_core.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/ghep_video_core.py",
-    "magicvoice.py":      "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/magicvoice.py"
+    "ghep_video_core.py": "https://raw.githubusercontent.com/buihuubac/magicvoice-releases/main/ghep_video_core.py"
   }
 }
