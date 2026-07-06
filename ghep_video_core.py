@@ -21,6 +21,9 @@ ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
        "-threads", "1",   # prevents x264 assertion: mv_max_spel || i_thread_frames==1
        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p"]
 
+ENC_GPU = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0",
+           "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-pix_fmt", "yuv420p"]
+
 TARGET_FPS    = 30
 SPEED_PTS_MIN = 0.80
 SPEED_PTS_MAX = 1.25
@@ -64,6 +67,29 @@ def no_window_kwargs():
     return kw
 
 
+_has_nvenc = None  # None = chưa kiểm tra; True/False sau lần đầu gọi _check_nvenc()
+
+
+def _check_nvenc():
+    """Kiểm tra NVENC (NVIDIA GPU encode) có khả dụng không. Cache kết quả."""
+    global _has_nvenc
+    if _has_nvenc is not None:
+        return _has_nvenc
+    try:
+        cmd = [FFMPEG_EXE, "-y", "-f", "lavfi", "-i", "color=black:s=128x128:d=0.1",
+               "-c:v", "h264_nvenc", "-f", "null", "-"]
+        r = subprocess.run(cmd, timeout=10, **no_window_kwargs())
+        _has_nvenc = (r.returncode == 0)
+    except Exception:
+        _has_nvenc = False
+    return _has_nvenc
+
+
+def _enc():
+    """Encoding args: NVENC (GPU) nếu khả dụng, libx264 (CPU) nếu không."""
+    return ENC_GPU if _check_nvenc() else ENC
+
+
 def natural_key(path):
     name = os.path.basename(path)
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
@@ -73,6 +99,33 @@ def list_media(folder, exts):
     files = [f for f in glob.glob(os.path.join(folder, "*"))
              if f.lower().endswith(exts)]
     return sorted(files, key=natural_key)
+
+
+def list_media_video_priority(folder):
+    """
+    List tất cả media trong folder, tự động ưu tiên video hơn ảnh khi cùng tên cơ sở.
+    Ví dụ: có 1.mp4 và 1.jpg → dùng 1.mp4, bỏ 1.jpg.
+    Trả (files_list, n_replaced): n_replaced = số ảnh bị thay bằng video cùng tên.
+    """
+    all_files = [f for f in glob.glob(os.path.join(folder, "*"))
+                 if f.lower().endswith(MEDIA_EXTS)]
+    by_stem = {}
+    for f in all_files:
+        stem = os.path.splitext(os.path.basename(f))[0].lower()
+        bk = by_stem.setdefault(stem, {"v": [], "i": []})
+        (bk["v"] if f.lower().endswith(VIDEO_EXTS) else bk["i"]).append(f)
+
+    result = []
+    n_replaced = 0
+    for bk in by_stem.values():
+        if bk["v"]:
+            result.append(sorted(bk["v"], key=natural_key)[0])
+            if bk["i"]:
+                n_replaced += 1
+        else:
+            result.append(sorted(bk["i"], key=natural_key)[0])
+
+    return sorted(result, key=natural_key), n_replaced
 
 
 def is_image(path):
@@ -336,7 +389,7 @@ def build_clip(video, voice, out_path, w, h, limit_speed, log_fn, fade=True, ken
         cmd = [FFMPEG_EXE, "-y", "-sws_flags", "bicubic",
                "-loop", "1", "-i", video, "-i", voice,
                "-filter_complex", vf, "-map", "[v]", "-map", "1:a",
-               "-t", f"{vdur:.3f}"] + ENC + [out_path]
+               "-t", f"{vdur:.3f}"] + _enc() + [out_path]
         _run_ff(cmd)
         return
 
@@ -367,7 +420,7 @@ def build_clip(video, voice, out_path, w, h, limit_speed, log_fn, fade=True, ken
            "-err_detect", "ignore_err", "-fflags", "+genpts+igndts",
            "-i", video, "-i", voice,
            "-filter_complex", vf, "-map", "[v]", "-map", "1:a:0",
-           "-t", f"{vdur:.3f}"] + ENC + [out_path]
+           "-t", f"{vdur:.3f}"] + _enc() + [out_path]
     _run_ff(cmd)
 
 
@@ -381,10 +434,24 @@ _PROJECTS_ROOT   = os.path.join(
 
 
 def detect_capcut_draft():
-    """Tìm thư mục com.lveditor.draft trên nhiều vị trí: LOCALAPPDATA, APPDATA, mọi ổ đĩa, registry."""
-    import string
-    _APP_NAMES = ("CapCut", "CapCut PC", "Capcut PC", "Capcut", "cap cut", "capcut")
-    _DRAFT_SUF = os.path.join("User Data", "Projects", "com.lveditor.draft")
+    """Tìm thư mục com.lveditor.draft — 5 strategies, trả về path có nhiều project nhất."""
+    import string, json as _json
+    _APP_NAMES = (
+        "CapCut", "CapCut PC", "Capcut PC", "Capcut", "cap cut", "capcut",
+        "CapCut for Business", "CapCut Business", "CapCutBusiness",
+        "TikTok Studio", "TikTokStudio",
+        "剪映", "JianyingPro", "Jianying Pro",
+    )
+    _DRAFT_NAME = "com.lveditor.draft"
+    _DRAFT_SUF  = os.path.join("User Data", "Projects", _DRAFT_NAME)
+    _REG_KEYS   = (
+        (None, r"SOFTWARE\ByteDance\CapCut"),
+        (None, r"SOFTWARE\ByteDance\JianyingPro"),
+        (None, r"SOFTWARE\ByteDance\CapCutBusiness"),
+        (None, r"SOFTWARE\ByteDance\TikTokStudio"),
+        (None, r"SOFTWARE\WOW6432Node\ByteDance\CapCut"),
+        (None, r"SOFTWARE\WOW6432Node\ByteDance\JianyingPro"),
+    )
 
     seen = set()
     candidates = []
@@ -395,14 +462,14 @@ def detect_capcut_draft():
             seen.add(p)
             candidates.append(p)
 
-    # 1. LOCALAPPDATA + APPDATA (Roaming)
+    # Strategy 1: LOCALAPPDATA + APPDATA với tất cả tên variant
     for base_env in ("LOCALAPPDATA", "APPDATA"):
         base = os.environ.get(base_env, "")
         if base:
             for app in _APP_NAMES:
                 _add(os.path.join(base, app, _DRAFT_SUF))
 
-    # 2. Tất cả ổ đĩa: kiểm tra root drive và thư mục user hiện tại
+    # Strategy 2: Tất cả ổ đĩa (CapCut cài ngoài C:\)
     try:
         import ctypes
         bitmask = ctypes.windll.kernel32.GetLogicalDrives()
@@ -412,9 +479,7 @@ def detect_capcut_draft():
                 continue
             drive = letter + ":\\"
             for app in _APP_NAMES:
-                # Gốc ổ đĩa (CapCut cài custom)
                 _add(os.path.join(drive, app, _DRAFT_SUF))
-                # AppData của user hiện tại trên ổ khác
                 if username:
                     for ad in (
                         os.path.join("Users", username, "AppData", "Local"),
@@ -424,46 +489,126 @@ def detect_capcut_draft():
     except Exception:
         pass
 
-    # 3. Registry: ByteDance có thể lưu đường dẫn tùy chỉnh
+    # Strategy 3: Registry — ByteDance lưu đường dẫn tuỳ chỉnh
     try:
         import winreg
-        for hive, key_path in (
-            (winreg.HKEY_CURRENT_USER,  r"SOFTWARE\ByteDance\CapCut"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ByteDance\CapCut"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\ByteDance\CapCut"),
-        ):
+        _reg_hives = (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE)
+        for hive in _reg_hives:
+            for _, key_path in _REG_KEYS:
+                try:
+                    with winreg.OpenKey(hive, key_path) as k:
+                        for val in ("UserDataPath", "ProjectPath", "DataPath",
+                                    "InstallPath", "WorkingDir", "DraftPath"):
+                            try:
+                                v, _ = winreg.QueryValueEx(k, val)
+                                if v and isinstance(v, str):
+                                    _add(os.path.join(v, "Projects", _DRAFT_NAME))
+                                    _add(os.path.join(v, _DRAFT_NAME))
+                                    _add(v)
+                            except FileNotFoundError:
+                                pass
+                except FileNotFoundError:
+                    pass
+    except Exception:
+        pass
+
+    # Strategy 4: Đọc config/Preferences JSON của CapCut để tìm Working Directory tuỳ chỉnh
+    # Khi user đổi ổ lưu draft trong Settings CapCut, path được ghi vào file này
+    try:
+        for base_env in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(base_env, "")
+            if not base:
+                continue
+            for app in _APP_NAMES:
+                app_dir = os.path.join(base, app)
+                if not os.path.isdir(app_dir):
+                    continue
+                # Chromium/Electron Preferences (chứa mọi setting app)
+                _cfg_files = [
+                    os.path.join(app_dir, "User Data", "Default", "Preferences"),
+                    os.path.join(app_dir, "User Data", "Local State"),
+                    os.path.join(app_dir, "pc_settings.json"),
+                    os.path.join(app_dir, "user_settings.json"),
+                    os.path.join(app_dir, "settings.json"),
+                    os.path.join(app_dir, "config.json"),
+                    os.path.join(app_dir, "userData.json"),
+                ]
+                for cfg in _cfg_files:
+                    if not os.path.isfile(cfg):
+                        continue
+                    try:
+                        with open(cfg, "r", encoding="utf-8", errors="ignore") as _f:
+                            _data = _json.load(_f)
+
+                        def _scan_json(obj, _depth=0):
+                            if _depth > 8:
+                                return
+                            if isinstance(obj, str):
+                                if _DRAFT_NAME in obj:
+                                    _add(obj)
+                                elif len(obj) > 4 and ("Projects" in obj or "draft" in obj.lower()):
+                                    _add(os.path.join(obj, "Projects", _DRAFT_NAME))
+                                    _add(os.path.join(obj, _DRAFT_NAME))
+                            elif isinstance(obj, dict):
+                                for _v in obj.values():
+                                    _scan_json(_v, _depth + 1)
+                            elif isinstance(obj, list):
+                                for _v in obj:
+                                    _scan_json(_v, _depth + 1)
+
+                        _scan_json(_data)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # Strategy 5: Walk thư mục AppData tìm "com.lveditor.draft" trực tiếp
+    # Giới hạn chỉ đi vào thư mục tên có chứa keyword CapCut/ByteDance/TikTok
+    _KW = ("capcut", "cap cut", "byted", "tiktok", "jianying", "剪映", "lveditor")
+    try:
+        for base_env in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(base_env, "")
+            if not base or not os.path.isdir(base):
+                continue
             try:
-                with winreg.OpenKey(hive, key_path) as k:
-                    for val in ("UserDataPath", "ProjectPath", "DataPath", "InstallPath"):
-                        try:
-                            v, _ = winreg.QueryValueEx(k, val)
-                            if v:
-                                _add(os.path.join(v, "Projects", "com.lveditor.draft"))
-                                _add(os.path.join(v, "com.lveditor.draft"))
-                                _add(v)
-                        except FileNotFoundError:
-                            pass
-            except FileNotFoundError:
+                for _entry in os.scandir(base):
+                    if not _entry.is_dir(follow_symlinks=False):
+                        continue
+                    if not any(_kw in _entry.name.lower() for _kw in _KW):
+                        continue
+                    # Walk sâu tối đa 6 cấp trong thư mục này
+                    for _root, _dirs, _ in os.walk(_entry.path):
+                        _rel_depth = _root[len(_entry.path):].count(os.sep)
+                        if _rel_depth >= 6:
+                            _dirs.clear()
+                            continue
+                        if os.path.basename(_root) == _DRAFT_NAME:
+                            _add(_root)
+                        _dirs[:] = [d for d in _dirs if not d.startswith(".")]
+            except (PermissionError, OSError):
                 pass
     except Exception:
         pass
 
+    # Kết quả
     if not candidates:
-        # Fallback về thư mục Projects (không có com.lveditor.draft)
-        fallback = os.path.join(os.environ.get("LOCALAPPDATA", ""), "CapCut", "User Data", "Projects")
-        return fallback if os.path.isdir(fallback) else ""
+        _fallback = os.path.join(
+            os.environ.get("LOCALAPPDATA", ""), "CapCut", "User Data", "Projects"
+        )
+        return _fallback if os.path.isdir(_fallback) else ""
 
     if len(candidates) == 1:
         return candidates[0]
 
-    # Nhiều candidate → chọn cái có nhiều project nhất (đang dùng thực sự)
-    def _count(d):
+    # Nhiều candidate → chọn thư mục có nhiều project nhất (đang dùng thực sự)
+    def _count_projects(d):
         try:
-            return sum(1 for x in os.listdir(d) if os.path.isdir(os.path.join(d, x)))
+            return sum(1 for x in os.listdir(d)
+                       if os.path.isdir(os.path.join(d, x)) and not x.startswith("com.lveditor"))
         except Exception:
             return 0
 
-    return max(candidates, key=_count)
+    return max(candidates, key=_count_projects)
 
 
 def list_capcut_projects(draft_folder):
@@ -580,6 +725,32 @@ def _cc_sorted_media(folder):
     return sorted(files, key=natural_key)
 
 
+def _cc_sorted_media_priority(folder):
+    """Sort ảnh+video, ưu tiên video hơn ảnh khi cùng tên cơ sở (stem).
+    VD: có 3.jpg + 3.mp4 → chỉ giữ 3.mp4, bỏ 3.jpg → không lệch 1-1 với voice.
+    Trả (sorted_list, n_replaced).
+    """
+    all_files = [os.path.join(folder, f) for f in os.listdir(folder)
+                 if os.path.splitext(f)[1].lower() in _CC_MEDIA_EXTS]
+    by_stem = {}
+    for f in all_files:
+        stem = os.path.splitext(os.path.basename(f))[0].lower()
+        bk   = by_stem.setdefault(stem, {"v": [], "i": []})
+        (bk["v"] if os.path.splitext(f)[1].lower() in _CC_VIDEO_EXTS else bk["i"]).append(f)
+
+    result = []
+    n_replaced = 0
+    for bk in by_stem.values():
+        if bk["v"]:
+            result.append(sorted(bk["v"], key=natural_key)[0])
+            if bk["i"]:
+                n_replaced += 1   # đếm số ảnh bị bỏ vì có video cùng tên
+        else:
+            result.append(sorted(bk["i"], key=natural_key)[0])
+
+    return sorted(result, key=natural_key), n_replaced
+
+
 def _cc_video_wh(path):
     """Đọc width/height của video bằng ffprobe."""
     try:
@@ -657,6 +828,254 @@ def _cc_make_vid_seg_video(mid, actual_dur_us, voice_dur_us, start):
     }
 
 
+# ── CapCut JSON helpers (inline — không phụ thuộc capcut_clone.py) ─────────
+
+_CC_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus"}
+
+
+def _cc_sorted_audio(folder):
+    """Sort audio files trong folder theo tên tự nhiên."""
+    files = [os.path.join(folder, f) for f in os.listdir(folder)
+             if os.path.splitext(f)[1].lower() in _CC_AUDIO_EXTS]
+    return sorted(files, key=natural_key)
+
+
+def _cc_get_dur(path):
+    """Duration của audio/video file → microseconds (dùng ffprobe)."""
+    try:
+        cmd = [FFPROBE_EXE, "-v", "quiet", "-print_format", "json",
+               "-show_format", "-show_streams", path]
+        r = subprocess.run(cmd, **no_window_kwargs())
+        info = json.loads(r.stdout.decode("utf-8", "ignore"))
+        for s in info.get("streams", []):
+            if s.get("codec_type") in ("audio", "video") and s.get("duration"):
+                return int(float(s["duration"]) * 1_000_000)
+        dur = info.get("format", {}).get("duration")
+        if dur:
+            return int(float(dur) * 1_000_000)
+    except Exception:
+        pass
+    return 3_000_000  # fallback 3s
+
+
+def _cc_image_wh(path):
+    """Đọc width/height ảnh bằng ffprobe."""
+    try:
+        cmd = [FFPROBE_EXE, "-v", "quiet", "-print_format", "json",
+               "-show_streams", "-select_streams", "v:0", path]
+        r = subprocess.run(cmd, **no_window_kwargs())
+        info = json.loads(r.stdout.decode("utf-8", "ignore"))
+        st = info.get("streams", [{}])[0]
+        return st.get("width", 1920), st.get("height", 1080)
+    except Exception:
+        return 1920, 1080
+
+
+def _cc_make_photo_mat(path, voice_dur_us):
+    """Material dict cho file ẢNH (type=photo)."""
+    import uuid as _uuid, time as _t
+    mid = str(_uuid.uuid4()).upper()
+    w, h = _cc_image_wh(path)
+    pw = path.replace("\\", "/")
+    ts = int(_t.time())
+    return mid, {
+        "aigc_type": "none", "audio_fade": None, "cartoon_path": "",
+        "category_id": "", "category_name": "local", "check_flag": 63487,
+        "crop": {"lower_left_x": 0.0, "lower_left_y": 1.0, "lower_right_x": 1.0,
+                 "lower_right_y": 1.0, "upper_left_x": 0.0, "upper_left_y": 0.0,
+                 "upper_right_x": 1.0, "upper_right_y": 0.0},
+        "crop_ratio": "free", "crop_scale": 1.0, "duration": voice_dur_us,
+        "extra_type_option": 0, "file_Path": pw, "filter_id": "", "filter_name": "",
+        "has_audio": False, "height": h, "id": mid,
+        "import_time": ts, "import_time_ms": ts * 1000,
+        "item_source": 1, "md5": "", "media_path": pw, "metetype": "photo",
+        "path": pw,
+        "roughcut_time_range": {"duration": -1, "start": -1},
+        "sharpness_flag": 0, "source": "other",
+        "stable": {"matrix_path": "", "stable_level": 0,
+                   "time_range": {"duration": 0, "start": 0}},
+        "team_id": "", "type": "photo",
+        "video_algorithm": {
+            "algorithms": [], "deflicker": None, "motion_blur_config": None,
+            "noise_reduction": None, "path": "", "quality_enhance": None,
+            "time_range": None,
+        },
+        "width": w,
+    }
+
+
+def _cc_make_photo_seg(mid, voice_dur_us, start):
+    """Segment dict cho ẢNH (source = voice_dur, target = voice_dur)."""
+    import uuid as _uuid
+    return {
+        "cartoon": False,
+        "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False},
+                 "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0},
+                 "translation": {"x": 0.0, "y": 0.0}},
+        "common_keyframes": [], "enable_adjust": True,
+        "enable_color_correct_adjust": False, "enable_color_curves": True,
+        "enable_lut": True, "enable_smart_color_adjust": False,
+        "extra_material_refs": [], "group_id": "", "hdr_settings": None,
+        "id": str(_uuid.uuid4()).upper(),
+        "intensifies_audio": False, "is_placeholder": False, "is_tone_modify": False,
+        "key_frame_refs": [], "last_nonzero_volume": 1.0, "material_id": mid,
+        "render_index": 0,
+        "responsive_layout": {"enable": False, "horizontal_pos_layout": 0,
+                              "size_layout": 0, "target_follow": "",
+                              "vertical_pos_layout": 0},
+        "reverse": False,
+        "source_timerange": {"duration": voice_dur_us, "start": 0},
+        "speed": 1.0,
+        "target_timerange": {"duration": voice_dur_us, "start": start},
+        "template_id": "", "template_scene": "default",
+        "track_attribute": 0, "track_render_index": 0,
+        "uniform_scale": {"on": True, "value": 1.0},
+        "visible": True, "volume": 1.0,
+    }
+
+
+def _cc_make_aud_mat(path, voice_dur_us):
+    """Material dict cho file AUDIO."""
+    import uuid as _uuid, time as _t
+    amid = str(_uuid.uuid4()).upper()
+    pw = path.replace("\\", "/")
+    ts = int(_t.time())
+    return amid, {
+        "audio_fade": None, "category_id": "", "category_name": "",
+        "check_flag": 1, "duration": voice_dur_us,
+        "effect_id": "", "file_Path": pw, "formula_id": "",
+        "id": amid,
+        "import_time": ts, "import_time_ms": ts * 1000,
+        "item_source": 1, "local_material_id": "", "music_id": "",
+        "name": os.path.basename(path), "path": pw,
+        "query": "", "request_id": "", "resource_id": "", "search_id": "",
+        "source_platform": 0, "team_id": "", "text": "",
+        "tone_color": "", "type": "extract_music", "wave_points": [],
+    }
+
+
+def _cc_make_aud_seg(amid, voice_dur_us, start):
+    """Segment dict cho AUDIO."""
+    import uuid as _uuid
+    return {
+        "cartoon": False,
+        "clip": {"alpha": 1.0, "flip": {"horizontal": False, "vertical": False},
+                 "rotation": 0.0, "scale": {"x": 1.0, "y": 1.0},
+                 "translation": {"x": 0.0, "y": 0.0}},
+        "common_keyframes": [], "enable_adjust": True,
+        "enable_color_correct_adjust": False, "enable_color_curves": True,
+        "enable_lut": False, "enable_smart_color_adjust": False,
+        "extra_material_refs": [], "group_id": "", "hdr_settings": None,
+        "id": str(_uuid.uuid4()).upper(),
+        "intensifies_audio": False, "is_placeholder": False, "is_tone_modify": False,
+        "key_frame_refs": [], "last_nonzero_volume": 1.0, "material_id": amid,
+        "render_index": 0,
+        "responsive_layout": {"enable": False, "horizontal_pos_layout": 0,
+                              "size_layout": 0, "target_follow": "",
+                              "vertical_pos_layout": 0},
+        "reverse": False,
+        "source_timerange": {"duration": voice_dur_us, "start": 0},
+        "speed": 1.0,
+        "target_timerange": {"duration": voice_dur_us, "start": start},
+        "template_id": "", "template_scene": "default",
+        "track_attribute": 0, "track_render_index": 0,
+        "uniform_scale": {"on": True, "value": 1.0},
+        "visible": True, "volume": 1.0,
+    }
+
+
+def _cc_apply_to_project(template_path, vid_mats_list, aud_mats_list,
+                          vid_segs_list, aud_segs_list, total_dur_us,
+                          new_name, is_overwrite, draft_folder, log_fn):
+    """
+    Đọc template CapCut project → ADD 2 track mới (video + audio) vào DƯỚI CÙNG.
+    KHÔNG đụng bất kỳ track/material nào của template (kêu gọi sub, nhạc nền, text...).
+    Returns (new_folder, n_segs).
+    """
+    import shutil as _shu, time as _t, uuid as _uuid
+    draft_json = os.path.join(template_path, "draft_content.json")
+    with open(draft_json, "r", encoding="utf-8") as _f:
+        data = json.load(_f)
+
+    # EXTEND materials — KHÔNG replace, giữ nguyên material gốc của template
+    data.setdefault("materials", {})
+    data["materials"].setdefault("videos", [])
+    data["materials"].setdefault("audios", [])
+    data["materials"]["videos"].extend(vid_mats_list)
+    data["materials"]["audios"].extend(aud_mats_list)
+
+    # Tạo 2 track MỚI hoàn toàn — INSERT vào đầu mảng tracks (= bottom layer trong CapCut)
+    # Track gốc của template (kêu gọi sub, sticker, text, nhạc nền...) KHÔNG bị đụng
+    _tracks = data.setdefault("tracks", [])
+    _n_old  = len(_tracks)
+
+    new_vid_track = {
+        "attribute": 0, "flag": 0,
+        "id": str(_uuid.uuid4()).upper(),
+        "is_default_name": True, "name": "",
+        "segments": vid_segs_list,
+        "type": "video",
+    }
+    new_aud_track = {
+        "attribute": 0, "flag": 0,
+        "id": str(_uuid.uuid4()).upper(),
+        "is_default_name": True, "name": "",
+        "segments": aud_segs_list,
+        "type": "audio",
+    }
+    # insert(0, aud) rồi insert(0, vid) → thứ tự cuối: [vid, aud, ...template tracks...]
+    # vid ở index 0 = bottom layer; aud ở index 1 = ngay trên vid
+    _tracks.insert(0, new_aud_track)
+    _tracks.insert(0, new_vid_track)
+    log_fn(f"   ℹ  Giữ nguyên {_n_old} track template — thêm mới: 1 video + 1 audio (dưới cùng)")
+
+    # Duration = max để không rút ngắn nhạc nền / kêu gọi sub của template
+    data["duration"] = max(data.get("duration", 0), total_dur_us)
+    data["name"] = new_name
+
+    # Tạo thư mục project mới
+    new_folder = os.path.join(draft_folder, new_name)
+    if os.path.exists(new_folder):
+        if is_overwrite:
+            _shu.rmtree(new_folder, ignore_errors=True)
+        else:
+            new_folder = os.path.join(draft_folder, f"{new_name}_{int(_t.time())}")
+    os.makedirs(new_folder, exist_ok=True)
+
+    # Copy file phụ từ template (thumbnail, meta…) — bỏ qua draft_content.json
+    for _item in os.listdir(template_path):
+        if _item == "draft_content.json":
+            continue
+        _src = os.path.join(template_path, _item)
+        _dst = os.path.join(new_folder, _item)
+        try:
+            if os.path.isfile(_src):
+                _shu.copy2(_src, _dst)
+        except Exception:
+            pass
+
+    # Cập nhật draft_meta_info.json nếu có
+    _meta = os.path.join(new_folder, "draft_meta_info.json")
+    if os.path.isfile(_meta):
+        try:
+            with open(_meta, "r", encoding="utf-8") as _mf:
+                _mdata = json.load(_mf)
+            _mdata["draft_name"] = new_name
+            _mdata["tm_duration"] = data["duration"]
+            with open(_meta, "w", encoding="utf-8") as _mf:
+                json.dump(_mdata, _mf, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            pass
+
+    # Ghi draft_content.json mới
+    out_json = os.path.join(new_folder, "draft_content.json")
+    with open(out_json, "w", encoding="utf-8") as _f:
+        json.dump(data, _f, ensure_ascii=False, separators=(",", ":"))
+
+    log_fn(f"✅ Project '{new_name}' → {new_folder}")
+    return new_folder, len(vid_segs_list)
+
+
 def push_to_capcut(media_dir, voice_dir, template_path, draft_folder,
                    new_name, is_overwrite, log_fn, progress_fn,
                    on_start=None):
@@ -664,22 +1083,22 @@ def push_to_capcut(media_dir, voice_dir, template_path, draft_folder,
     Headless: đẩy ảnh+video+voice 1-1 vào CapCut project.
     Tự động phân biệt ảnh (type=photo) và video (type=video).
     Trả (folder, n_pairs, minutes, seconds).
+    Self-contained — không cần capcut_clone.py.
     """
-    import sys as _sys
-    _capcut_dir = os.path.dirname(_CAPCUT_CLONE_PY)
-    if _capcut_dir not in _sys.path:
-        _sys.path.insert(0, _capcut_dir)
-    import capcut_clone as cc  # noqa
-
-    media_files = _cc_sorted_media(media_dir)
-    audio_files = cc.sorted_files(voice_dir, cc.AUDIO_EXTS)
+    media_files, n_replaced = _cc_sorted_media_priority(media_dir)
+    audio_files = _cc_sorted_audio(voice_dir)
 
     if not media_files:
         raise RuntimeError(f"Không tìm thấy ảnh/video trong:\n{media_dir}")
     if not audio_files:
         raise RuntimeError(f"Không tìm thấy audio trong:\n{voice_dir}")
 
+    if n_replaced:
+        log_fn(f"   🎬 Ưu tiên video: {n_replaced} video thay ảnh cùng tên (ảnh tương ứng bị bỏ)")
+
     n = min(len(media_files), len(audio_files))
+    if len(media_files) != len(audio_files):
+        log_fn(f"   ⚠ Media={len(media_files)} / Voice={len(audio_files)} — ghép {n} cặp đầu")
     media_files = media_files[:n]
     audio_files = audio_files[:n]
 
@@ -697,20 +1116,20 @@ def push_to_capcut(media_dir, voice_dir, template_path, draft_folder,
     cursor = 0
 
     for i, (media, mp3) in enumerate(zip(media_files, audio_files)):
-        voice_dur_us = cc.get_dur(mp3)
+        voice_dur_us = _cc_get_dur(mp3)
         ext = os.path.splitext(media)[1].lower()
 
         if ext in _CC_IMAGE_EXTS:
-            vmid, vm = cc.make_vid_mat(media, voice_dur_us)
-            vseg = cc.make_vid_seg(vmid, voice_dur_us, cursor)
+            vmid, vm = _cc_make_photo_mat(media, voice_dur_us)
+            vseg = _cc_make_photo_seg(vmid, voice_dur_us, cursor)
         else:
             actual_dur_s = get_duration(media)
             actual_dur_us = int(actual_dur_s * 1_000_000)
             vmid, vm = _cc_make_video_mat(media, actual_dur_us)
             vseg = _cc_make_vid_seg_video(vmid, actual_dur_us, voice_dur_us, cursor)
 
-        amid, am = cc.make_aud_mat(mp3, voice_dur_us)
-        aseg = cc.make_aud_seg(amid, voice_dur_us, cursor)
+        amid, am = _cc_make_aud_mat(mp3, voice_dur_us)
+        aseg = _cc_make_aud_seg(amid, voice_dur_us, cursor)
 
         vid_mats[vmid] = vm
         aud_mats[amid] = am
@@ -722,7 +1141,7 @@ def push_to_capcut(media_dir, voice_dir, template_path, draft_folder,
         progress_fn(i + 1)
         cursor += voice_dur_us
 
-    folder, _ = cc.apply_to_project(
+    folder, _ = _cc_apply_to_project(
         template_path,
         list(vid_mats.values()), list(aud_mats.values()),
         vid_segs_list, aud_segs_list, cursor,
@@ -770,7 +1189,7 @@ def concat_clips(clips, final_path, out_dir):
     p = subprocess.run(cmd_copy, **no_window_kwargs())
     if p.returncode != 0 or not _ok():
         cmd_enc = [FFMPEG_EXE, "-y", "-f", "concat", "-safe", "0", "-i", list_file
-                   ] + ENC + ["-movflags", "+faststart", final_path]
+                   ] + _enc() + ["-movflags", "+faststart", final_path]
         _run_ff(cmd_enc)
 
     try:
@@ -829,7 +1248,7 @@ def _concat_clips_xfade(clips, final_path, out_dir, trans_dur=0.4):
         cmd = ([FFMPEG_EXE, "-y"] + input_args +
                ["-filter_complex_script", filter_file,
                 "-map", f"[{prev_v}]", "-map", "[outa]"] +
-               ENC + ["-movflags", "+faststart", final_path])
+               _enc() + ["-movflags", "+faststart", final_path])
         _run_ff(cmd)
     except Exception:
         # Fallback: dùng concat thường nếu xfade lỗi
@@ -858,6 +1277,9 @@ def process_pairs(voices, videos, out_dir, w, h, limit_speed, fade, kenburns,
 
     clips = []
     n_loi = 0
+    _nvenc = _check_nvenc()
+    log_fn(f"🎬 Encoder: {'NVIDIA GPU (h264_nvenc)' if _nvenc else 'CPU (libx264)'}")
+    last_ok_video = None  # media gần nhất ghép thành công — dùng để bù khi media lỗi
 
     for i in range(n):
         if cancel_ev and cancel_ev.is_set():
@@ -903,17 +1325,21 @@ def process_pairs(voices, videos, out_dir, w, h, limit_speed, fade, kenburns,
                     if _need_f > 1.0:
                         _core_f += ",tpad=stop_mode=clone:stop_duration=1.0"
                     log_fn(f"   [VIDEO-SAFE] {'làm chậm' if _need_f>1 else 'tăng tốc'} ×{1/_need_f:.2f} (ultrafast)")
+                    _enc_safe = (
+                        ["-c:v", "h264_nvenc", "-preset", "p1", "-rc", "vbr",
+                         "-cq", "25", "-pix_fmt", "yuv420p",
+                         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
+                        if _nvenc else
+                        ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+                         "-pix_fmt", "yuv420p", "-bf", "0", "-refs", "1", "-threads", "1",
+                         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
+                    )
                     _run_ff([FFMPEG_EXE, "-y",
                              "-err_detect", "ignore_err", "-fflags", "+genpts+igndts",
                              "-i", fv, "-i", fa,
                              "-filter_complex", f"[0:v]{_core_f}[v]",
                              "-map", "[v]", "-map", "1:a:0",
-                             "-t", f"{_vdur_f:.3f}",
-                             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
-                             "-pix_fmt", "yuv420p", "-bf", "0", "-refs", "1",
-                             "-threads", "1",   # i_thread_frames==1 → x264 assertion không fire
-                             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-                             out_path])
+                             "-t", f"{_vdur_f:.3f}"] + _enc_safe + [out_path])
                     ok = _done()
                 if ok:
                     log_fn("   ✔  Đã sửa và ghép thành công.")
@@ -934,7 +1360,36 @@ def process_pairs(voices, videos, out_dir, w, h, limit_speed, fade, kenburns,
                     except OSError:
                         pass
 
+        # Bù media: nếu vẫn lỗi, dùng media lân cận hoạt động được
+        # — Có media trước: dùng media trước (last_ok_video)
+        # — Chưa có (cặp đầu lỗi): thử media kế tiếp (videos[i+1])
+        _fallback_used = False
+        if not ok:
+            if last_ok_video is not None:
+                _fb = last_ok_video
+                _fb_label = "media trước"
+            elif i + 1 < len(videos):
+                _fb = videos[i + 1]
+                _fb_label = "media kế tiếp"
+            else:
+                _fb = None
+                _fb_label = ""
+            if _fb is not None:
+                log_fn(f"   🔄  Media lỗi → bù bằng {_fb_label}: {os.path.basename(_fb)}")
+                try:
+                    build_clip(_fb, voices[i], out_path,
+                               w, h, limit_speed, log_fn, fade, kenburns, i)
+                    ok = _done()
+                    if ok:
+                        last_ok_video = _fb  # cập nhật đúng file đã dùng
+                        _fallback_used = True
+                        log_fn("   ✔  Bù thành công.")
+                except Exception:
+                    ok = False
+
         if ok:
+            if not _fallback_used:
+                last_ok_video = videos[i]  # cập nhật bình thường nếu không dùng fallback
             clips.append(out_path)
         else:
             n_loi += 1
