@@ -17,7 +17,6 @@ echo.
 echo  Buoc nay se go sach torch/torchvision cu va cai lai.
 echo  Vui long KHONG tat cua so nay!
 echo.
-pause
 
 :: Tim Python 3.11
 set "PY="
@@ -66,5 +65,4 @@ if defined CAIDAT (
     echo    MOI TRUONG DA SACH XONG!
     echo    Hay chay lai file CaiDat_MagicVoice.bat
     echo  =====================================================
-    pause
 )
