@@ -720,19 +720,22 @@ def _download_model():
         return
     info("Dang tai model TTS (co the mat 10-30 phut tuy toc do mang)...")
     info(f"Model: {MODEL_ID}")
-    # Thu 1: HuggingFace (qua hf-mirror.com)
+    # Thu 1: HuggingFace (qua hf-mirror.com — luon hard-set, tranh may co env cu)
     import os as _os
-    _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    _os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
     _hf_ok = False
     try:
         info("Dang ket noi HuggingFace (hf-mirror.com)...")
+        _env_dl = dict(_os.environ, HF_ENDPOINT="https://hf-mirror.com")
         result = subprocess.run(
             [PY, "-c",
+             "import os; os.environ['HF_ENDPOINT']='https://hf-mirror.com'; "
              "from huggingface_hub import snapshot_download; "
              f"p = snapshot_download('{MODEL_ID}'); "
              "print('OK:', p)"],
             timeout=3600,
             creationflags=_CFLAGS,
+            env=_env_dl,
         )
         if result.returncode == 0:
             ok("Tai model tu HuggingFace hoan tat!")
