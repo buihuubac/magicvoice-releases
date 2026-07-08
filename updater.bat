@@ -38,6 +38,7 @@ call :swap_file "script_processor.py"
 call :swap_file "setup_helper.py"
 call :swap_file "ghep_video_core.py"
 call :swap_file "CaiDat_MagicVoice.bat"
+call :swap_file "_ShowError.vbs"
 call :swap_file "version.txt"
 
 REM === Xoa file .new con du lai (neu co) ===

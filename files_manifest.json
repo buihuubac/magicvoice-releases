@@ -1,0 +1,16 @@
+{
+  "_comment": "FIX v3.65 (3): danh sach file auto-update MOI NHAT. App se tai file nay TRUOC khi update, dam bao khach o BAT KY BAN CU NAO cung tai dung du file - khong bi 'cham 1 buoc' nhu truoc (xem DEV_NOTES). Moi lan them/bot file update, CHI CAN SUA FILE JSON NAY (khong can sua magicvoice_gui.py + recompile PYD nua).",
+  "files": [
+    "magicvoice_core.cp311-win_amd64.pyd",
+    "auth_manager.cp311-win_amd64.pyd",
+    "license_guard.cp311-win_amd64.pyd",
+    "magicvoice.py",
+    "script_processor.py",
+    "setup_helper.py",
+    "ghep_video_core.py",
+    "CaiDat_MagicVoice.bat",
+    "_ShowError.vbs",
+    "updater.bat",
+    "version.txt"
+  ]
+}

@@ -590,6 +590,43 @@ def detect_capcut_draft():
     except Exception:
         pass
 
+    # Strategy 6: neu van chua tim thay gi, quet THANG toan bo ổ đĩa (bỏ qua
+    # thư mục hệ thống) tìm đúng tên "com.lveditor.draft" — bắt được trường
+    # hợp khách đã đổi "Draft storage location" trong Settings CapCut sang
+    # 1 thư mục tuỳ ý (không nằm trong AppData, tên không chứa keyword CapCut
+    # nào cả) mà Strategy 1-5 không đoán được. Chỉ chạy khi chưa có candidate
+    # nào (tốn thời gian hơn) — giới hạn độ sâu để không quét vô hạn.
+    if not candidates:
+        _SKIP_TOP = {
+            "windows", "program files", "program files (x86)", "programdata",
+            "$recycle.bin", "system volume information", "recovery",
+            "msocache", "perflogs", "boot",
+        }
+        try:
+            import ctypes
+            bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+            for i, letter in enumerate(string.ascii_uppercase):
+                if not (bitmask & (1 << i)):
+                    continue
+                drive = letter + ":\\"
+                try:
+                    for _root, _dirs, _ in os.walk(drive):
+                        _rel = _root[len(drive):]
+                        _depth = _rel.count(os.sep) if _rel else 0
+                        if _depth == 0:
+                            _dirs[:] = [d for d in _dirs
+                                        if d.lower() not in _SKIP_TOP and not d.startswith(".")]
+                        if _depth >= 7:
+                            _dirs.clear()
+                            continue
+                        if os.path.basename(_root) == _DRAFT_NAME:
+                            _add(_root)
+                            _dirs.clear()
+                except (PermissionError, OSError):
+                    pass
+        except Exception:
+            pass
+
     # Kết quả
     if not candidates:
         _fallback = os.path.join(

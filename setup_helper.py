@@ -779,7 +779,7 @@ def main():
     # ── Header ──────────────────────────────────────────────
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.57{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.65{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
