@@ -322,11 +322,17 @@ def can_import(module):
 # PYTORCH CHECK + INSTALL
 # ─────────────────────────────────────────────────────────
 def _torch_status():
-    """Tra ve (installed, cuda_avail, version_str) hoac (False,False,None)."""
+    """Tra ve (installed, cuda_avail, version_str) hoac (False,False,None).
+    FIX v3.65 (23): THEM import torchaudio vao check nay - truoc day chi
+    check torch, nen torchaudio DLL bi hong (vd mismatch ABI do bug 22 gay
+    ra) khong bao gio duoc phat hien -> ensure_torch() tuong "da OK", khong
+    cai lai -> loi "Entry Point Not Found: torch_library_impl" lap lai MAI
+    MAI qua moi lan cai dat lai/sua loi, khong bao gio tu phuc hoi duoc.
+    """
     try:
         r = subprocess.run(
             [PY, "-c",
-             "import torch; "
+             "import torch; import torchaudio; "
              "c=torch.cuda.is_available(); "
              "g=torch.cuda.get_device_name(0) if c else 'none'; "
              "print(torch.__version__, c, g)"],
