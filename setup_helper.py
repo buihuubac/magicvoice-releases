@@ -241,11 +241,21 @@ def select_torch_build(driver_cuda_ver, compute_cap):
 PY = sys.executable
 
 def _pip(args, timeout=360, retries=2):
-    """Chay pip voi retry. Tra ve True neu OK."""
-    cmd = [PY, "-m", "pip"] + args + [
-        "--quiet", "--no-warn-script-location",
-        "--disable-pip-version-check"
-    ]
+    """Chay pip voi retry. Tra ve True neu OK.
+    FIX v3.65 (26): --no-warn-script-location CHI hop le voi "pip install",
+    khong hop le voi "pip uninstall" (pip tra ve loi "no such option" va
+    LUON THAT BAI). Truoc day gan flag nay vo dieu kien cho MOI lenh pip
+    (install lan uninstall) -> MOI lenh "pip uninstall torch/torchvision/
+    torchaudio..." trong toan bo file (install_torch(), v.v.) chua bao gio
+    thuc su go duoc gi ca -> ban torch cu/hong luon bi de len boi ban moi
+    thay vi duoc thay the sach, gay loi DLL "Entry Point Not Found" /
+    "c10.dll initialization failed" lap lai mai khong tu het duoc du cai
+    lai bao nhieu lan.
+    """
+    _extra = ["--quiet", "--disable-pip-version-check"]
+    if args and args[0] == "install":
+        _extra.insert(1, "--no-warn-script-location")
+    cmd = [PY, "-m", "pip"] + args + _extra
     for attempt in range(retries + 1):
         try:
             r = subprocess.run(
