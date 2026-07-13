@@ -104,23 +104,32 @@ powershell -NoProfile -Command "$s=(New-Object -COM WScript.Shell).CreateShortcu
 echo   Shortcut Desktop: OK
 
 echo.
+if exist "%~dp0.caidat_running" del /f "%~dp0.caidat_running" >nul 2>&1
 if "%SETUP_CODE%"=="0" (
     echo  ================================================
     echo    CAI DAT HOAN CHINH - San sang su dung!
     echo  ================================================
+    echo.
+    echo  Dang mo MagicVoice TTS Studio...
+    timeout /t 2 /nobreak >nul
+    REM FIX v3.65: goi qua MagicVoice.vbs (wscript, an cua so hoan toan) thay
+    REM vi Chay_MagicVoice.bat truc tiep - mo .bat luon nhay 1 cua so den
+    REM (console host) du chay xong rat nhanh, nhin thieu chuyen nghiep luc
+    REM vua cai xong. Luc nay Python chac chan da cai xong nen khong can
+    REM nhanh du phong "chua cai Python" cua Chay_MagicVoice.bat nua.
+    start "" wscript.exe "%~dp0MagicVoice.vbs"
 ) else (
+    REM FIX v3.65 (29): setup_helper.py da dung dan phat hien + bao loi khi
+    REM torch/torchaudio/omnivoice... khong import duoc (SETUP_CODE != 0),
+    REM nhung truoc day van CU MO APP nhu khong co chuyen gi - khach luon
+    REM thay dialog crash xau xi ("Loi Khoi Dong") thay vi thong bao ro rang.
+    REM Gio KHONG mo app nua khi cai that bai - hien thong bao ro + tro
+    REM khach xem install_log.txt / lien he ho tro, tranh crash kho hieu.
     echo  ================================================
-    echo    CAI DAT XONG - Xem install_log.txt neu co loi
+    echo    CAI DAT CHUA HOAN TAT - Xem install_log.txt
     echo  ================================================
+    if exist "%~dp0_ShowError.vbs" (
+        cscript //nologo "%~dp0_ShowError.vbs" "Cai dat moi truong chua hoan tat (thieu 1 vai thu vien quan trong), app chua the mo duoc luc nay. Xem chi tiet tai install_log.txt trong thu muc cai dat, hoac lien he ho tro Zalo 0985 483 623."
+    )
 )
-echo.
-echo  Dang mo MagicVoice TTS Studio...
-timeout /t 2 /nobreak >nul
-if exist "%~dp0.caidat_running" del /f "%~dp0.caidat_running" >nul 2>&1
-REM FIX v3.65: goi qua MagicVoice.vbs (wscript, an cua so hoan toan) thay vi
-REM Chay_MagicVoice.bat truc tiep - mo .bat luon nhay 1 cua so den (console
-REM host) du chay xong rat nhanh, nhin thieu chuyen nghiep luc vua cai xong.
-REM Luc nay Python chac chan da cai xong nen khong can nhanh du phong "chua
-REM cai Python" cua Chay_MagicVoice.bat nua.
-start "" wscript.exe "%~dp0MagicVoice.vbs"
-exit /b 0
+exit /b %SETUP_CODE%
