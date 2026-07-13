@@ -431,7 +431,14 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 PACKAGES = [
     # (import_name, pip_package, extra_pip_args, required, always_upgrade)
     # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
-    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
+    # FIX v3.65 (22): them --no-deps - omnivoice khong pin torch/torchaudio
+    # nen "pip install omnivoice --upgrade" (khong --no-deps) co the am tham
+    # doi version torch de thoa man dependency cua omnivoice, pha vo cap
+    # torch+torchaudio da cai KHOP nhau o Buoc 3 (ensure_torch) ngay truoc do
+    # -> "Entry Point Not Found: torch_library_impl" (DLL torchaudio cu build
+    # cho torch version khac). Cac dependency thuc su cua omnivoice (soundfile,
+    # scipy, numpy, huggingface_hub...) da duoc liet ke rieng ben duoi.
+    ("omnivoice",      "omnivoice",       ["--no-cache-dir", "--no-deps"], True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
     ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
@@ -466,7 +473,10 @@ def ensure_package(imp, pip_pkg, extra, required, always_upgrade=False, display_
             return True
 
     # Retry upgrade
-    _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"], retries=1)
+    # FIX v3.65 (22): giu nguyen "extra" (vd --no-deps cua omnivoice) o buoc
+    # retry nay - truoc day bi rot mat, co the vo tinh keo theo dependency
+    # khong mong muon (vd doi version torch) khi lan cai dau tien that bai.
+    _pip(["install", pip_pkg, "--upgrade", "--no-cache-dir"] + extra, retries=1)
     if can_import(imp):
         ok(f"{label} — da cai (upgrade)")
         return True
