@@ -20,6 +20,14 @@ if __name__ == "__main__":
     _splash.update()
 
     import os as _os, sys as _sys, traceback as _tb, subprocess as _sp
+    # FIX v3.65 (28): mot nguyen nhan RAT PHO BIEN gay "[WinError 1114] DLL
+    # initialization routine failed" khi torch load c10.dll tren Windows la
+    # xung dot giua 2 ban Intel OpenMP runtime (libiomp5md.dll) - 1 ban di
+    # kem torch, 1 ban di kem numpy/MKL. Day la workaround CHINH THUC duoc
+    # PyTorch/Intel khuyen dung (KHONG phai giai phap tam) - dat truoc khi
+    # import bat cu thu gi dung torch. Dat o day (truoc ca subprocess setup
+    # o duoi) de propagate sang ca tien trinh setup_helper.py neu no chay.
+    _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     _base = _os.path.dirname(_os.path.abspath(__file__))
     _log  = _os.path.join(_base, "error_log.txt")
 

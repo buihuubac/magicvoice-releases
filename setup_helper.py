@@ -7,6 +7,14 @@ Tu dong phat hien GPU/CUDA va cai dung moi truong.
 import sys, os, subprocess, re, time, platform, traceback
 from datetime import datetime
 
+# FIX v3.65 (28): tranh xung dot Intel OpenMP runtime (libiomp5md.dll) giua
+# torch va numpy/MKL - nguyen nhan pho bien gay "[WinError 1114] DLL
+# initialization routine failed" khi torch load c10.dll tren Windows. Dat
+# TRUOC KHI bat ky subprocess con nao cua file nay import torch (vd
+# _torch_status()) - subprocess.run() ke thua os.environ cua tien trinh cha
+# theo mac dinh.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 # CREATE_NO_WINDOW: an cua so console tren Windows
 _CFLAGS = 0x08000000 if os.name == "nt" else 0
 
