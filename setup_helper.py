@@ -447,14 +447,15 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 PACKAGES = [
     # (import_name, pip_package, extra_pip_args, required, always_upgrade)
     # always_upgrade=True: luon upgrade package nay, tranh loi tuong thich khi update app
-    # FIX v3.65 (22): them --no-deps - omnivoice khong pin torch/torchaudio
-    # nen "pip install omnivoice --upgrade" (khong --no-deps) co the am tham
-    # doi version torch de thoa man dependency cua omnivoice, pha vo cap
-    # torch+torchaudio da cai KHOP nhau o Buoc 3 (ensure_torch) ngay truoc do
-    # -> "Entry Point Not Found: torch_library_impl" (DLL torchaudio cu build
-    # cho torch version khac). Cac dependency thuc su cua omnivoice (soundfile,
-    # scipy, numpy, huggingface_hub...) da duoc liet ke rieng ben duoi.
-    ("omnivoice",      "omnivoice",       ["--no-cache-dir", "--no-deps"], True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
+    # FIX v3.65 (27): BO --no-deps cua fix 22 - omnivoice can nhieu dependency
+    # thuc su (transformers, va co the con thieu nua) khong duoc liet ke het
+    # o PACKAGES ben duoi, --no-deps chan het khien "No module named
+    # 'transformers'" v.v. xuat hien lan luot. Thay vao do: cho omnivoice cai
+    # BINH THUONG (keo du dependency that su can), roi CUONG CHE cai lai dung
+    # torch+torchaudio da chon o Buoc 3 NGAY SAU vong lap PACKAGES nay (xem
+    # reassert_torch_pin() trong main()) - vua co du dependency, vua dam bao
+    # torch/torchaudio khong bi omnivoice am tham doi version.
+    ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
     ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
@@ -863,6 +864,14 @@ def main():
         imp, pip_pkg, extra, required, always_upgrade = entry[:5]
         display = entry[5] if len(entry) > 5 else None
         ensure_package(imp, pip_pkg, extra, required, always_upgrade, display_name=display)
+
+    # FIX v3.65 (27): omnivoice (vua cai o tren, khong con --no-deps) co the
+    # da keo theo 1 ban torch/torchaudio KHAC voi ban da chon khop nhau o
+    # Buoc 3 - cuong che cai lai DUNG ban da chon 1 lan nua o day de dam bao
+    # trang thai cuoi cung luon dung, bat ke cac buoc giua co lam gi.
+    info("Xac nhan lai dung phien ban PyTorch (tranh omnivoice lam lech)...")
+    _extra_pin = ["--index-url", index_url] if index_url else []
+    _pip(["install", "torch", "torchaudio"] + _extra_pin, timeout=1200, retries=1)
 
     # ── Buoc 5: ffmpeg ──────────────────────────────────────
     section("BUOC 5/6 — ffmpeg", "5/6")
