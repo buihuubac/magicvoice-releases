@@ -2,35 +2,35 @@
 setlocal enabledelayedexpansion
 title MagicVoice - Don Moi Truong
 
-:: Kiem tra Admin
-net session >nul 2>&1
-if %errorlevel% NEQ 0 (
-    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-    exit /b
-)
+:: FIX v3.65 (24): bo check Admin - khong can thiet (Python cai per-user vao
+:: %LOCALAPPDATA%, khong dung Program Files) - giong fix da lam o
+:: CaiDat_MagicVoice.bat. Truoc day yeu cau Admin khong dung ly do gi.
 
 echo.
 echo  =====================================================
 echo    MagicVoice - Don Sach Moi Truong (Fix Xung Dot)
 echo  =====================================================
 echo.
-echo  Buoc nay se go sach torch/torchvision cu va cai lai.
+echo  Buoc nay se go sach torch/torchvision/torchaudio cu va cai lai.
 echo  Vui long KHONG tat cua so nay!
 echo.
 
 :: Tim Python 3.11
 set "PY="
+set "PYDIR="
 py -3.11 --version >nul 2>&1
 if not errorlevel 1 ( set "PY=py -3.11" & goto :py_ok )
 if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
-    set "PY=%LOCALAPPDATA%\Programs\Python\Python311\python.exe" & goto :py_ok
+    set "PY=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    set "PYDIR=%LOCALAPPDATA%\Programs\Python\Python311"
+    goto :py_ok
 )
 echo  LOI: Khong tim thay Python 3.11!
 pause & exit /b 1
 
 :py_ok
-echo  [1/4] Go sach torch, torchvision, torchaudio...
-%PY% -m pip uninstall torch torchvision torchaudio -y 2>nul
+echo  [1/4] Go sach torch, torchvision, torchaudio, torchcodec...
+%PY% -m pip uninstall torch torchvision torchaudio torchcodec -y 2>nul
 echo   Xong.
 
 echo.
@@ -39,8 +39,10 @@ echo  [2/4] Xoa pip cache (tranh tai lai ban cu)...
 echo   Xong.
 
 echo.
-echo  [3/4] Don folder rac trong site-packages...
-%PY% -c "import glob,shutil,site,os; [shutil.rmtree(j,ignore_errors=True) or print('  Xoa:',j) for sp in (site.getsitepackages() or []) + [site.getusersitepackages()] for j in glob.glob(os.path.join(sp,'~*')) + glob.glob(os.path.join(sp,'torchvision*'))]" 2>nul
+echo  [3/4] Xoa tay thu muc torch/torchaudio/torchvision/torchcodec con sot
+echo        (FIX v3.65 (24): pip uninstall doi khi khong don sach het DLL
+echo        hong, gay loi "Entry Point Not Found" lap lai mai khong tu het) ...
+%PY% -c "import glob,shutil,site,os; [shutil.rmtree(j,ignore_errors=True) or print('  Xoa:',j) for sp in (site.getsitepackages() or []) + [site.getusersitepackages()] for pat in ('torch','torchvision*','torchaudio*','torchcodec*','~*') for j in glob.glob(os.path.join(sp,pat))]" 2>nul
 echo   Xong.
 
 echo.
