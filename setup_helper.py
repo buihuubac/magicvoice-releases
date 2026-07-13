@@ -323,17 +323,29 @@ def _pip_with_dots(args, timeout=1200, retries=1):
         t.join(timeout=2)
 
 
-def can_import(module):
-    """Kiem tra import module co thanh cong khong."""
-    try:
-        r = subprocess.run(
-            [PY, "-c", f"import {module}"],
-            capture_output=True, timeout=30,
-            creationflags=_CFLAGS
-        )
-        return r.returncode == 0
-    except Exception:
-        return False
+def can_import(module, retries=2, delay=3):
+    """Kiem tra import module co thanh cong khong.
+    FIX v3.65 (31): mot vai lan cai xong, kiem tra NGAY LAP TUC bi "false
+    negative" (bao loi dù thuc te binh thuong - khach mo app tay sau do van
+    chay OK) - nghi ngo do antivirus dang khoa/quet cac file .dll vua tai/
+    ghi xong trong vai giay, chua kip xong luc minh kiem tra. Retry vai lan
+    cach nhau vai giay truoc khi ket luan that bai that su, danh rieng cho
+    cac module lon/nhieu DLL (torch, torchaudio, omnivoice).
+    """
+    for attempt in range(retries + 1):
+        try:
+            r = subprocess.run(
+                [PY, "-c", f"import {module}"],
+                capture_output=True, timeout=30,
+                creationflags=_CFLAGS
+            )
+            if r.returncode == 0:
+                return True
+        except Exception:
+            pass
+        if attempt < retries:
+            time.sleep(delay)
+    return False
 
 
 # ─────────────────────────────────────────────────────────
@@ -347,25 +359,34 @@ def _torch_status():
     cai lai -> loi "Entry Point Not Found: torch_library_impl" lap lai MAI
     MAI qua moi lan cai dat lai/sua loi, khong bao gio tu phuc hoi duoc.
     """
-    try:
-        r = subprocess.run(
-            [PY, "-c",
-             "import torch; import torchaudio; "
-             "c=torch.cuda.is_available(); "
-             "g=torch.cuda.get_device_name(0) if c else 'none'; "
-             "print(torch.__version__, c, g)"],
-            capture_output=True, text=True, timeout=60,
-            creationflags=_CFLAGS
-        )
-        if r.returncode != 0:
-            return False, False, None
-        parts = r.stdout.strip().split(" ", 2)
-        ver      = parts[0] if len(parts) > 0 else "?"
-        cuda_ok  = parts[1].lower() == "true" if len(parts) > 1 else False
-        gpu_name = parts[2] if len(parts) > 2 else ""
-        return True, cuda_ok, ver
-    except Exception:
-        return False, False, None
+    # FIX v3.65 (31): retry voi delay - xem ghi chu o can_import(), cung ap
+    # dung cho torch/torchaudio (2 module lon nhat, de bi antivirus khoa
+    # tam thoi ngay sau khi vua ghi xong file).
+    _last_err = None
+    for _attempt in range(3):
+        try:
+            r = subprocess.run(
+                [PY, "-c",
+                 "import torch; import torchaudio; "
+                 "c=torch.cuda.is_available(); "
+                 "g=torch.cuda.get_device_name(0) if c else 'none'; "
+                 "print(torch.__version__, c, g)"],
+                capture_output=True, text=True, timeout=60,
+                creationflags=_CFLAGS
+            )
+            if r.returncode == 0:
+                parts = r.stdout.strip().split(" ", 2)
+                ver      = parts[0] if len(parts) > 0 else "?"
+                cuda_ok  = parts[1].lower() == "true" if len(parts) > 1 else False
+                return True, cuda_ok, ver
+            _last_err = r.stderr
+        except Exception as _e:
+            _last_err = str(_e)
+        if _attempt < 2:
+            time.sleep(3)
+    if _last_err:
+        _log(f"_torch_status: import that bai sau 3 lan thu: {_last_err[-300:]}", "warn")
+    return False, False, None
 
 def install_torch(index_url, tag, desc):
     """Gỡ torch cũ rồi cài đúng version. Trả về True nếu thành công."""
