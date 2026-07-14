@@ -223,6 +223,23 @@ def select_torch_build(driver_cuda_ver, compute_cap):
     if compute_cap < 5.0:
         return None, "cpu", f"CPU (GPU compute {compute_cap:.1f} — qua cu, khong ho tro CUDA PyTorch)"
 
+    # FIX v3.65 (33): GPU kien truc RẤT MOI (Blackwell/RTX 50-series tro len,
+    # compute capability >= 10.0) BAT BUOC dung build cu128 - khong duoc
+    # "rot" xuong cu126/124/121 chi vi driver doc duoc CUDA version hoi thap
+    # (vd 12.4/12.6). Cac build cu126/124/121 duoc bien dich boi CUDA toolkit
+    # CU HON, KHONG co san kernel bien dich cho kien truc Blackwell (SM
+    # 12.x) - PyTorch van "chay duoc" nho PTX JIT-compile tai runtime, nhung
+    # cham hon RAT NHIEU (bien dich lai tung kernel lan dau dung, khong toi
+    # uu hoa cho kien truc moi) -> chinh la nguyen nhan Clone Voice cham
+    # tren RTX 5060 du CUDA van bao "available". Logic vong lap ben duoi
+    # (dua tren driver_cuda_ver) khong biet phan biet dieu nay, luon chon
+    # build DAU TIEN thoa driver detected - can chan cung truoc khi vao vong
+    # lap do.
+    if compute_cap >= 10.0:
+        return ("https://download.pytorch.org/whl/cu128", "cu128",
+                "CUDA 12.8 — GPU kien truc moi (Blackwell/RTX 50xx tro len), "
+                "bat buoc dung build nay de co kernel toi uu")
+
     try:
         major, minor = driver_cuda_ver.split(".", 1)
         drv_int = int(major) * 10 + int(minor)   # "12.4" -> 124
@@ -288,8 +305,12 @@ def _pip(args, timeout=360, retries=2):
 def _infer_compute_cap(name):
     """Infer compute capability tu ten GPU khi nvidia-smi compute_cap query that bai."""
     n = name.upper()
+    # FIX v3.65 (33): Blackwell (RTX 50-series) compute capability that su
+    # la 12.0, KHONG phai 9.0 - gia tri sai truoc day khien logic gate moi
+    # (compute_cap >= 10.0 -> bat buoc cu128) khong kich hoat dung khi phai
+    # dung nhanh suy doan nay (nvidia-smi query compute_cap that bai).
     if any(x in n for x in ["RTX 50", "BLACKWELL"]):
-        return 9.0
+        return 12.0
     if any(x in n for x in ["RTX 40", "ADA", "L40", "H100", "A100"]):
         return 8.9
     if any(x in n for x in ["RTX 30", "A30", "A40", "A10"]):
@@ -413,7 +434,7 @@ def install_torch(index_url, tag, desc):
     warn(f"torch {ver} cai OK nhung CUDA chua xac nhan — co the can khoi dong lai")
     return True   # van coi la thanh cong de tiep tuc cai goi khac
 
-def ensure_torch(index_url, tag, desc, has_gpu):
+def ensure_torch(index_url, tag, desc, has_gpu, compute_cap=None):
     """
     Kiem tra torch hien tai co phu hop khong.
     Chi cai lai neu can thiet.
@@ -441,12 +462,22 @@ def ensure_torch(index_url, tag, desc, has_gpu):
 
     # CUDA build dau tien that bai → thu lan luot tat ca CUDA build con lai
     if tag != "cpu":
-        _fallback_builds = [
-            ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
-            ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
-            ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
-            ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
-        ]
+        # FIX v3.65 (33): GPU kien truc moi (Blackwell/RTX 50xx+, compute
+        # >= 10.0) KHONG duoc thu cu126/124/121/118 - cac build nay thieu
+        # kernel bien dich cho kien truc moi, se "thanh cong" (import duoc,
+        # CUDA bao available) nhung cham ray do phai PTX JIT-compile moi
+        # lan - dung la nguyen nhan "Clone Voice cham" tren RTX 5060. Chi
+        # nen retry cu128 (co the do mang/tai loi thoang qua) roi thang xuong
+        # CPU fallback, khong thu cac build cu hon.
+        if compute_cap is not None and compute_cap >= 10.0:
+            _fallback_builds = []
+        else:
+            _fallback_builds = [
+                ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
+                ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
+                ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
+                ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
+            ]
         for _url, _tag, _desc in _fallback_builds:
             if _tag == tag:
                 continue  # da thu roi
@@ -885,7 +916,7 @@ def main():
 
     # ── Buoc 3: PyTorch ─────────────────────────────────────
     section("BUOC 3/6 — PyTorch", "3/6")
-    ensure_torch(index_url, cuda_tag, cuda_desc, has_gpu)
+    ensure_torch(index_url, cuda_tag, cuda_desc, has_gpu, compute_cap)
 
     # ── Buoc 4: Thu vien ────────────────────────────────────
     section("BUOC 4/6 — Thu vien Python", "4/6")
@@ -932,12 +963,18 @@ def main():
             ok(f"PyTorch {ver} — CPU mode")
             if has_gpu:
                 warn("GPU co mat nhung CUDA khong hoat dong — tu dong thu cai lai...")
-                _retry_builds = [
-                    ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
-                    ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
-                    ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
-                    ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
-                ]
+                # FIX v3.65 (33): xem ghi chu o ensure_torch() - GPU kien truc
+                # moi (Blackwell/RTX 50xx+) khong nen thu cac build cu126/
+                # 124/121/118, chi cu128 la build dung.
+                if compute_cap is not None and compute_cap >= 10.0:
+                    _retry_builds = []
+                else:
+                    _retry_builds = [
+                        ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
+                        ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
+                        ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
+                        ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
+                    ]
                 for _url, _tag, _desc in _retry_builds:
                     warn(f"  Thu lai: {_desc}...")
                     if install_torch(_url, _tag, _desc):
