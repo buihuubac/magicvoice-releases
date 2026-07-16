@@ -462,22 +462,26 @@ def ensure_torch(index_url, tag, desc, has_gpu, compute_cap=None):
 
     # CUDA build dau tien that bai → thu lan luot tat ca CUDA build con lai
     if tag != "cpu":
-        # FIX v3.65 (33): GPU kien truc moi (Blackwell/RTX 50xx+, compute
-        # >= 10.0) KHONG duoc thu cu126/124/121/118 - cac build nay thieu
-        # kernel bien dich cho kien truc moi, se "thanh cong" (import duoc,
-        # CUDA bao available) nhung cham ray do phai PTX JIT-compile moi
-        # lan - dung la nguyen nhan "Clone Voice cham" tren RTX 5060. Chi
-        # nen retry cu128 (co the do mang/tai loi thoang qua) roi thang xuong
-        # CPU fallback, khong thu cac build cu hon.
+        _fallback_builds = [
+            ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
+            ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
+            ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
+            ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
+        ]
+        # FIX v3.66 (rut kinh nghiem tu 33): GPU kien truc moi (Blackwell/
+        # RTX 50xx+, compute >= 10.0) LUON uu tien cu128 truoc (khong bao
+        # gio "rot" xuong build cu chi vi driver hoi cu - xem
+        # select_torch_build()). Nhung neu chinh cu128 CUNG that bai that su
+        # (vd driver qua cu, khong the/khong hop le cho ca cu128), van NEN
+        # cho thu cac build cu hon nhu phuong an CUOI CUNG - cham hon (PTX
+        # JIT-compile, khong co kernel toi uu cho SM moi) van con hon la rot
+        # thang ve CPU. Truoc day (v3.65 hotfix 33) lam qua tay: xoa TRANG
+        # het fallback cho GPU moi, co the khien mot so may (driver rieng
+        # chua kip cap nhat toi cu128) mat het duong lui GPU oan uong.
         if compute_cap is not None and compute_cap >= 10.0:
-            _fallback_builds = []
-        else:
-            _fallback_builds = [
-                ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
-                ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
-                ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
-                ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
-            ]
+            warn("cu128 that bai that su tren GPU kien truc moi - "
+                 "thu cac build cu hon lam phuong an cuoi (co the CHAM hon nhieu "
+                 "do thieu kernel toi uu, nhung con hon CPU thuan)")
         for _url, _tag, _desc in _fallback_builds:
             if _tag == tag:
                 continue  # da thu roi
@@ -864,9 +868,18 @@ def main():
     os.chdir(BASE_DIR)
 
     # ── Header ──────────────────────────────────────────────
+    # FIX v3.66: banner truoc day in cung "v3.65" bat ke ban that su la gi -
+    # sai hien thi ngay tu chinh v3.66 nay. Doc dong tu version.txt (cung
+    # file CaiDat_MagicVoice.bat/magicvoice.py da dung) de luon dung, khong
+    # con phai nho sua tay moi lan bump version.
+    try:
+        _app_ver = (open(os.path.join(BASE_DIR, "version.txt"), encoding="utf-8")
+                    .read().strip()) or "?"
+    except Exception:
+        _app_ver = "?"
     print(f"""
 {C['C']}{'═'*56}
-{C['BO']}   MagicVoice TTS Studio — Smart Installer v3.65{C['X']}
+{C['BO']}   MagicVoice TTS Studio — Smart Installer v{_app_ver}{C['X']}
 {C['D']}   Python : {sys.version.split()[0]}
    OS     : {platform.release()} {platform.machine()}
    Thu muc: {BASE_DIR}
@@ -963,18 +976,17 @@ def main():
             ok(f"PyTorch {ver} — CPU mode")
             if has_gpu:
                 warn("GPU co mat nhung CUDA khong hoat dong — tu dong thu cai lai...")
-                # FIX v3.65 (33): xem ghi chu o ensure_torch() - GPU kien truc
-                # moi (Blackwell/RTX 50xx+) khong nen thu cac build cu126/
-                # 124/121/118, chi cu128 la build dung.
-                if compute_cap is not None and compute_cap >= 10.0:
-                    _retry_builds = []
-                else:
-                    _retry_builds = [
-                        ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
-                        ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
-                        ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
-                        ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
-                    ]
+                # FIX v3.66: xem ghi chu o ensure_torch() - giu lai fallback
+                # cu126/124/121/118 lam PHUONG AN CUOI CUNG ke ca GPU kien
+                # truc moi (Blackwell/RTX 50xx+), chi la KHONG uu tien chon
+                # truoc cu128 nua (select_torch_build da dam bao cu128 luon
+                # duoc thu truoc). Cham hon van con hon khong co GPU.
+                _retry_builds = [
+                    ("https://download.pytorch.org/whl/cu126", "cu126", "CUDA 12.6"),
+                    ("https://download.pytorch.org/whl/cu121", "cu121", "CUDA 12.1"),
+                    ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
+                    ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
+                ]
                 for _url, _tag, _desc in _retry_builds:
                     warn(f"  Thu lai: {_desc}...")
                     if install_torch(_url, _tag, _desc):
