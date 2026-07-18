@@ -878,7 +878,17 @@ def _cc_sorted_audio(folder):
 
 
 def _cc_get_dur(path):
-    """Duration của audio/video file → microseconds (dùng ffprobe)."""
+    """Duration của audio file (voice) → microseconds.
+    FIX v3.66: truoc day CHI dung ffprobe, neu that bai (vd may khach
+    chi cai duoc ffmpeg.exe qua imageio-ffmpeg - package nay KHONG kem
+    ffprobe.exe) se AM THAM tra ve fallback CUNG 3 giay cho MOI file
+    voice, khong bao loi gi ca. Anh (may cai san ffprobe trong PATH tu
+    truoc) khong gap, nhung may khach cai moi hoan toan thi luon dinh -
+    anh moi ghi la "voice dong bo dung, anh khong dong bo theo voice":
+    anh (khong co duration that) bi gan CUNG 1 do dai 3s trong khi voice
+    that su van phat du do dai that cua no khi CapCut render.
+    Gio thu them soundfile (thu vien Python co san, KHONG can ffprobe)
+    lam phuong an du phong TRUOC KHI chiu thua ve fallback cung."""
     try:
         cmd = [FFPROBE_EXE, "-v", "quiet", "-print_format", "json",
                "-show_format", "-show_streams", path]
@@ -892,7 +902,17 @@ def _cc_get_dur(path):
             return int(float(dur) * 1_000_000)
     except Exception:
         pass
-    return 3_000_000  # fallback 3s
+
+    # Du phong: doc duration truc tiep bang soundfile (khong can ffprobe)
+    try:
+        import soundfile as _sf
+        _info = _sf.info(path)
+        if _info.frames and _info.samplerate:
+            return int(_info.frames / _info.samplerate * 1_000_000)
+    except Exception:
+        pass
+
+    return 3_000_000  # fallback 3s (chi khi ca ffprobe lan soundfile deu that bai)
 
 
 def _cc_image_wh(path):
