@@ -129,7 +129,7 @@ if "%SETUP_CODE%"=="0" (
     echo    CAI DAT CHUA HOAN TAT - Xem install_log.txt
     echo  ================================================
     if exist "%~dp0_ShowError.vbs" (
-        cscript //nologo "%~dp0_ShowError.vbs" "Cai dat moi truong chua hoan tat (thieu 1 vai thu vien quan trong), app chua the mo duoc luc nay. Xem chi tiet tai install_log.txt trong thu muc cai dat, hoac lien he ho tro Zalo 0985 483 623."
+        cscript //nologo "%~dp0_ShowError.vbs" "Cai dat moi truong chua hoan tat (thieu 1 vai thu vien quan trong ~2-3GB), app chua the mo duoc luc nay. Nguyen nhan thuong gap NHAT la mang khong on dinh khi tai file lon - thu doi sang mang khac (VD phat 4G tu dien thoai qua cap USB) roi chay lai file cai dat nay 1 lan nua. Xem chi tiet tai install_log.txt trong thu muc cai dat, hoac lien he ho tro Zalo 0985 483 623."
     )
 )
 exit /b %SETUP_CODE%

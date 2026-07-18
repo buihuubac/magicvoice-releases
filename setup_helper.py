@@ -407,6 +407,22 @@ def _torch_status():
             time.sleep(3)
     if _last_err:
         _log(f"_torch_status: import that bai sau 3 lan thu: {_last_err[-300:]}", "warn")
+        # FIX v3.66: phat hien dau hieu file .pyd/.dll bi THIEU (khong phai
+        # loi khoi tao DLL nhu bug 28/31) - day la dau hieu dac trung cua
+        # goi torch/torchaudio TAI VE BI THIEU/DUT GIUA CHUNG (thuong do
+        # mang khong on dinh, khong lien quan antivirus hay xung dot DLL).
+        # Truoc day loi nay yeu cau nguoi dung/support tu tay dieu tra qua
+        # rat nhieu buoc (kiem tra size file, mo file .whl bang Notepad...)
+        # moi tim ra dung nguyen nhan - gio bao thang trong log de tiet
+        # kiem thoi gian debug cho ca khach lan admin.
+        _sig = _last_err.lower()
+        if ("could not find module" in _sig or "filenotfounderror" in _sig
+                or "no such file or directory" in _sig):
+            _log("=> Nghi ngo: goi torch/torchaudio tai ve bi THIEU/DUT GIUA "
+                 "CHUNG (thieu file .pyd/.dll ben trong) - thuong do MANG "
+                 "KHONG ON DINH khi tai file lon (~2-3GB), khong phai loi "
+                 "may tinh. De xuat: thu mang khac (USB tethering tu dien "
+                 "thoai) roi cai lai.", "warn")
     return False, False, None
 
 def install_torch(index_url, tag, desc):
@@ -499,6 +515,14 @@ def ensure_torch(index_url, tag, desc, has_gpu, compute_cap=None):
             return True
 
     err("KHONG CAI DUOC PYTORCH!")
+    # FIX v3.66: het TAT CA build (5 CUDA build + CPU) deu that bai la dau
+    # hieu manh cua van de MANG (khong phai loi 1 build cu the) - bao thang
+    # huong xu ly thay vi de admin/khach phai tu dieu tra qua nhieu buoc
+    # (kiem tra size file .whl, mo Notepad xem noi dung ZIP...).
+    warn("Da thu HET 5 ban CUDA + CPU deu that bai - day la dau hieu MANG "
+         "khong tai duoc file lon (~2-3GB) on dinh, khong phai loi rieng 1 "
+         "ban cu the. De xuat: doi sang mang khac (USB tethering tu dien "
+         "thoai) roi chay lai CaiDat_MagicVoice.bat.")
     _fail_list.append("torch")
     return False
 
