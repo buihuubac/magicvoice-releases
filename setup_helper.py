@@ -888,6 +888,40 @@ def _download_model():
             warn("Model se duoc tai khi mo app lan dau — bam 'Tai Model'.")
 
 
+def repair_torch():
+    """FIX v3.66: sua nhanh RIENG torch/torchaudio khi app phat hien file
+    .pyd bi thieu luc khoi dong (thuong do AV/Defender cach ly file NGAY
+    SAU khi cai xong, du luc cai _torch_status() da bao OK). Duoc goi tu
+    dong boi magicvoice.py, KHONG can khach chay lai toan bo installer
+    (5-20 phut) - chi force-reinstall torch+torchaudio (1-3 phut)."""
+    os.chdir(BASE_DIR)
+    _log("=== REPAIR-TORCH: bat dau sua nhanh torch/torchaudio ===")
+    driver_cuda, gpu_name, compute_cap, driver_ver = detect_gpu()
+    has_gpu = gpu_name is not None
+    index_url, cuda_tag, cuda_desc = select_torch_build(driver_cuda, compute_cap)
+    if has_gpu and cuda_tag == "cpu":
+        index_url, cuda_tag, cuda_desc = _CU118_URL, _CU118_TAG, _CU118_DESC
+
+    info(f"Sua nhanh PyTorch ({cuda_desc})...")
+    _pip(["uninstall", "torch", "torchvision", "torchaudio", "torchcodec", "-y"])
+    time.sleep(1)
+    extra = ["--index-url", index_url] if index_url else []
+    ok_install = _pip_with_dots(
+        ["install", "torch", "torchaudio", "--force-reinstall", "--no-cache-dir"] + extra,
+        timeout=1200, retries=1
+    )
+    _flush_log()
+    if not ok_install:
+        _log("REPAIR-TORCH: pip install that bai", "error")
+        return 1
+    inst, cuda_ok, ver = _torch_status()
+    if not inst:
+        _log("REPAIR-TORCH: cai xong nhung van khong import duoc", "error")
+        return 1
+    _log(f"REPAIR-TORCH: thanh cong — PyTorch {ver}, CUDA={cuda_ok}")
+    return 0
+
+
 def main():
     os.chdir(BASE_DIR)
 
@@ -983,6 +1017,14 @@ def main():
     fail_count = final_verify()
 
     # Torch + CUDA info
+    # FIX v3.66: bien co rieng cho "GPU co mat nhung CUDA khong bao gio kich
+    # hoat duoc du da thu het fallback" - TRUOC DAY truong hop nay KHONG lam
+    # fail_count/_fail_list tang len, nen thong bao cuoi cung van in "✅ CAI
+    # DAT HOAN TAT — Khong co loi!" du khach co RTX/GTX that nhung dang chay
+    # CPU-only (cham hon nhieu lan), khong he duoc canh bao ro rang. Gio
+    # theo doi rieng bang _gpu_cuda_unavailable de thong bao cuoi phan biet
+    # ro "khong loi" vs "khong loi NHUNG dang chay CPU du co GPU".
+    _gpu_cuda_unavailable = False
     inst, cuda_ok, ver = _torch_status()
     if inst:
         if cuda_ok:
@@ -1011,12 +1053,14 @@ def main():
                     ("https://download.pytorch.org/whl/cu124", "cu124", "CUDA 12.4"),
                     ("https://download.pytorch.org/whl/cu118", "cu118", "CUDA 11.8"),
                 ]
+                _gpu_cuda_unavailable = True
                 for _url, _tag, _desc in _retry_builds:
                     warn(f"  Thu lai: {_desc}...")
                     if install_torch(_url, _tag, _desc):
                         _, cuda_ok2, ver2 = _torch_status()
                         if cuda_ok2:
                             ok(f"PyTorch {ver2} — CUDA OK sau retry!")
+                            _gpu_cuda_unavailable = False
                             break
                         warn(f"  {_desc}: torch cai OK nhung CUDA van khong nhan")
                 else:
@@ -1030,10 +1074,27 @@ def main():
     bar = "═" * 56
     print(f"\n{C['C']}{bar}{C['X']}")
     if fail_count == 0 and "torch" not in _fail_list:
-        print(f"{C['G']}{C['BO']}  ✅ CAI DAT HOAN TAT — Khong co loi!{C['X']}")
-        print(f"  Tool san sang su dung.")
-        print(f"{C['C']}{bar}{C['X']}\n")
-        _log("=== THANH CONG ===")
+        if _gpu_cuda_unavailable:
+            # FIX v3.66: TRUOC DAY nhanh nay in thang "Khong co loi!" ke ca
+            # khi co GPU that (RTX/GTX) nhung CUDA khong bao gio kich hoat
+            # duoc du da thu het 5 ban fallback o tren - khach co GPU van
+            # chay CPU-only (cham hon RAT nhieu, co the gap 10-30 lan tuy
+            # model) ma installer lai bao "khong co loi" nen khach khong biet
+            # de bao/kiem tra driver. Gio bao RO RANG day la "hoan tat co
+            # canh bao", khong phai "hoan tat khong loi".
+            print(f"{C['Y']}{C['BO']}  ⚠ CAI DAT HOAN TAT — NHUNG GPU KHONG DUOC SU DUNG{C['X']}")
+            print(f"  Phat hien card do hoa nhung CUDA khong kich hoat duoc du da thu")
+            print(f"  het cac ban PyTorch. Tool VAN chay duoc binh thuong nhung se")
+            print(f"  dung CPU de xu ly (CHAM HON NHIEU so voi dung GPU).")
+            print(f"  Goi y: cap nhat driver NVIDIA moi nhat tai nvidia.com/download")
+            print(f"  roi chay lai CaiDat_MagicVoice.bat.")
+            print(f"{C['C']}{bar}{C['X']}\n")
+            _log("=== THANH CONG NHUNG GPU KHONG DUOC SU DUNG (CPU-only) ===", "warn")
+        else:
+            print(f"{C['G']}{C['BO']}  ✅ CAI DAT HOAN TAT — Khong co loi!{C['X']}")
+            print(f"  Tool san sang su dung.")
+            print(f"{C['C']}{bar}{C['X']}\n")
+            _log("=== THANH CONG ===")
         try:
             import pathlib as _pl
             _ver_str = "ok"
@@ -1052,11 +1113,27 @@ def main():
         print(f"  Xem chi tiet: install_log.txt")
         print(f"{C['C']}{bar}{C['X']}\n")
         _log(f"=== XONG VOI CANH BAO: {msg} ===", "warn")
+        # FIX v3.66: truoc day khi cai loi, dialog cho khach CHI bao chung
+        # chung "thieu 1 vai thu vien" - admin/support phai xin khach mo
+        # install_log.txt, doc ca tram dong log moi biet DUNG thu vien nao
+        # loi - mat thoi gian rieng cho tung ca. Gio ghi thang ten thu vien
+        # loi ra 1 file rieng, NGAN GON, de CaiDat_MagicVoice.bat doc va
+        # nhet thang vao popup loi - khach gui 1 anh chup la biet lien
+        # chinh xac can sua gi, khong can hoi qua lai xin log nua.
+        try:
+            import pathlib as _pl2
+            _fail_summary = ', '.join(_fail_list) if _fail_list else "khong xac dinh (xem install_log.txt)"
+            (_pl2.Path(BASE_DIR) / "last_setup_fail.txt").write_text(
+                _fail_summary, encoding="utf-8")
+        except Exception:
+            pass
         return 1
 
 
 if __name__ == "__main__":
     try:
+        if "--repair-torch" in sys.argv:
+            sys.exit(repair_torch())
         code = main()
         sys.exit(code)
     except KeyboardInterrupt:
