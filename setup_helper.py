@@ -560,6 +560,13 @@ PACKAGES = [
     ("PIL",            "Pillow",          [],                       True,  False),
     ("numpy",          "numpy",           [],                       True,  False),
     ("requests",       "requests",        [],                       True,  False),
+    # FIX v3.68 (theo bao cao khach 2026-07-26): truoc day certifi CHI co mat
+    # GIAN TIEP qua dependency cua "requests" - khong dam bao 100% (vd requests
+    # ban moi doi dependency, hoac cai that bai rieng khong keo theo certifi).
+    # magicvoice_gui.py gio dung certifi TRUC TIEP de tao SSL context rieng cho
+    # urllib.request (fix loi "CERTIFICATE_VERIFY_FAILED" khi Cap Nhat Ngay) -
+    # can liet ke tuong minh de chac chan luon co tren may khach.
+    ("certifi",        "certifi",         [],                       True,  False),
     ("tqdm",           "tqdm",            [],                       True,  False),
     ("imageio_ffmpeg", "imageio-ffmpeg",  ["--force-reinstall"],    True,  True),   # can moi nhat de lay ffmpeg exe
     ("sounddevice",    "sounddevice",     [],                       False, False),  # optional
