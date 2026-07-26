@@ -547,6 +547,14 @@ PACKAGES = [
     ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
     ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
+    # FIX v3.68 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): thu vien
+    # cho mode "MG Nhanh" (ten ky thuat: kokoro - KHONG hien ra UI/
+    # log gui khach, xem NOTES_kokoro_feature.md). required=False - day la
+    # tinh nang CONG THEM, neu cai that bai (mang yeu, may la...) app van
+    # chay binh thuong voi Clone/Design/Edge nhu cu, chi rieng mode moi nay
+    # bao loi ro rang khi khach chon (xem _fast_generate()), KHONG chan
+    # toan bo qua trinh cai dat.
+    ("kokoro",         "kokoro",          [],                       False, False,  "MG Nhanh"),
     ("soundfile",      "soundfile",       [],                       True,  False),
     ("scipy",          "scipy",           [],                       True,  False),
     ("PIL",            "Pillow",          [],                       True,  False),
