@@ -265,6 +265,60 @@ def select_torch_build(driver_cuda_ver, compute_cap):
 # ─────────────────────────────────────────────────────────
 PY = sys.executable
 
+# FIX v3.68 (BUG THAT SU nghiem trong, phat hien 2026-07-27 tu install_log.txt
+# that cua 1 khach): may khach co Python 3.11.9 cai binh thuong tu python.org
+# (KHONG phai ban embeddable) nhung module `pip` KHONG co san (co the do luc
+# cai Python khach bo tich "Add pip" hoac pip bi go/hong sau do). Hau qua:
+# MOI LENH pip trong toan bo file nay (torch, omnivoice, edge-tts, tat ca 13
+# thu vien...) deu that bai giong het nhau voi "No module named pip" - khong
+# phai loi mang nhu thong bao cu (CaiDat_MagicVoice.bat) suy doan. Truoc day
+# KHONG CO co che tu phat hien/tu sua truong hop nay, du file `get-pip.py`
+# de bootstrap pip da co san trong _bundled/ (dung cho Python embeddable,
+# chua bao gio duoc tan dung cho truong hop nay).
+def _ensure_pip_available():
+    """Kiem tra `python -m pip` co chay duoc khong - neu KHONG (thieu han
+    module pip, khac voi pip cu/loi phien ban), tu bootstrap bang
+    _bundled/get-pip.py di kem san trong goi cai. Goi ham nay TRUOC BAT KY
+    lenh pip nao khac trong file - neu buoc nay that bai, moi buoc sau chac
+    chan that bai giong het nhau, khong can thu tiep lam gi."""
+    try:
+        r = subprocess.run([PY, "-m", "pip", "--version"],
+                            capture_output=True, text=True, timeout=30,
+                            encoding="utf-8", errors="replace", creationflags=_CFLAGS)
+        if r.returncode == 0:
+            return True
+    except Exception as e:
+        _log(f"pip --version check exception: {e}", "warn")
+
+    warn("Khong tim thay module 'pip' trong Python — dang tu cai lai (get-pip.py)...")
+    _get_pip = os.path.join(BASE_DIR, "_bundled", "get-pip.py")
+    if not os.path.isfile(_get_pip):
+        err(f"Khong tim thay {_get_pip} de tu sua — can cai lai Python thu cong")
+        return False
+    try:
+        r2 = subprocess.run([PY, _get_pip, "--quiet"],
+                             capture_output=True, text=True, timeout=180,
+                             encoding="utf-8", errors="replace", creationflags=_CFLAGS)
+        if r2.returncode != 0:
+            err(f"get-pip.py that bai: {r2.stderr[-300:]}")
+            return False
+    except Exception as e:
+        err(f"get-pip.py exception: {e}")
+        return False
+
+    # Xac nhan lai sau khi bootstrap
+    try:
+        r3 = subprocess.run([PY, "-m", "pip", "--version"],
+                             capture_output=True, text=True, timeout=30,
+                             encoding="utf-8", errors="replace", creationflags=_CFLAGS)
+        if r3.returncode == 0:
+            ok("Da tu cai lai pip thanh cong")
+            return True
+    except Exception as e:
+        _log(f"pip --version recheck exception: {e}", "warn")
+    err("Van khong dung duoc pip sau khi tu sua")
+    return False
+
 def _pip(args, timeout=360, retries=2):
     """Chay pip voi retry. Tra ve True neu OK.
     FIX v3.65 (26): --no-warn-script-location CHI hop le voi "pip install",
@@ -962,6 +1016,25 @@ def main():
     _log(f"Platform: {platform.platform()}")
     _log(f"Base dir: {BASE_DIR}")
 
+    # FIX v3.68 (theo bao cao khach 2026-07-27): kiem tra pip TRUOC TIEN,
+    # truoc ca BUOC 0 - neu pip khong dung duoc, MOI buoc sau (torch, tat ca
+    # thu vien) chac chan that bai giong het nhau, phai dung lai va bao ro
+    # ngay tu dau thay vi de khach cho ~4 phut nhin toan bo 13 thu vien lan
+    # luot bao loi "No module named pip" giong nhau ma khong hieu vi sao.
+    section("BUOC PIP — Kiem tra module pip", "pip")
+    if not _ensure_pip_available():
+        err("KHONG THE TIEP TUC - pip khong hoat dong du da tu sua.")
+        _fail_list.append("pip")
+        try:
+            import pathlib as _pl3
+            (_pl3.Path(BASE_DIR) / "last_setup_fail.txt").write_text(
+                "pip (module pip khong co san trong Python, tu bootstrap bang get-pip.py cung that bai)",
+                encoding="utf-8")
+        except Exception:
+            pass
+        _flush_log()
+        return 1
+
     # ── Buoc 0: Prerequisites (VC++ Redist) ─────────────────
     section("BUOC 0/6 — Moi truong he thong (VC++ Redist)", "0/6")
     ensure_prerequisites()
@@ -997,8 +1070,16 @@ def main():
 
     # ── Buoc 2: Upgrade pip ──────────────────────────────────
     section("BUOC 2/6 — Nang cap pip", "2/6")
-    _pip(["install", "--upgrade", "pip"], retries=1)
-    ok("pip")
+    # FIX v3.68 (theo bao cao khach 2026-07-27): truoc day log "OK: pip" VO
+    # DIEU KIEN du _pip() that bai (khong doc gia tri tra ve) - lam log nhin
+    # nhu binh thuong ngay ca khi that bai that su, gay nham lan khi doc lai
+    # de dieu tra. Day chi la buoc NANG CAP (khong bat buoc, pip da duoc dam
+    # bao hoat dong o BUOC PIP ngay tu dau) nen that bai o day KHONG fatal -
+    # chi warn ro rang thay vi gia vo thanh cong.
+    if _pip(["install", "--upgrade", "pip"], retries=1):
+        ok("pip")
+    else:
+        warn("Nang cap pip that bai (khong fatal - pip cu van dung duoc)")
 
     # ── Buoc 3: PyTorch ─────────────────────────────────────
     section("BUOC 3/6 — PyTorch", "3/6")
