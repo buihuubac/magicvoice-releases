@@ -286,6 +286,66 @@ def _pip_version_check():
         return False
 
 
+def _fix_disabled_site_pth():
+    """FIX v3.68 (BUG THAT SU GOC, phat hien 2026-07-29 tu install_log.txt
+    khach thu 3 - bang chung truc tiep): 2 lan sua pip truoc (get-pip.py +
+    ensurepip) deu KHONG giai quyet duoc vi CHUNG KHONG PHAI nguyen nhan
+    goc. Chan doan thuc te cho thay: pip THUC SU da duoc cai dung vao
+    Lib\\site-packages (file ton tai tren dia, xac nhan qua os.listdir), NHUNG
+    sys.path CUA PYTHON KHONG CO thu muc do - vi day la ban Python
+    "embeddable" (CaiDat_MagicVoice.bat tu giai nen _bundled\\python-3.11.9-
+    embed-amd64.zip vao dung duong dan %LOCALAPPDATA%\\Programs\\Python\\
+    Python311 - TRUNG voi duong dan "Python cai binh thuong" ma logic do
+    tim Python kiem tra truoc) va file "python311._pth" di kem BAN CHAT
+    TAT san dong "import site" (dung "#import site"). .bat co doan sua
+    dong nay khi MOI GIAI NEN LAN DAU, nhung neu khach da tung co san
+    python.exe tai duong dan do tu 1 lan chay truoc (vd MagicVoice ban cu
+    hon, hoac lan cai truoc do that bai giua chung) - .bat se di theo
+    NHANH "da co san Python" (chi check --version chay duoc, KHONG kiem
+    tra lai _pth) va KHONG BAO GIO vao lai doan sua _pth do nua, du chay
+    lai CaiDat_MagicVoice.bat bao nhieu lan cung vay - giai thich dung tai
+    sao khach cai lai nhieu lan van gap y het 1 loi.
+
+    Ham nay: tim file "pythonXY._pth" ngay canh sys.executable, neu co
+    dong "#import site" (site BI TAT) thi tu bo dau # (BAT site len). Goi
+    TRUOC MOI thu (ca truoc buoc kiem tra pip) vi day la nguyen nhan GOC -
+    neu site bi tat thi KHONG CHI pip, MOI thu vien khac cung se cung
+    trieu chung y het (co cai duoc nhung Python khong thay), sua cho khac
+    la vo ich neu khong sua cai nay truoc."""
+    try:
+        _pydir = os.path.dirname(PY)
+        _pth_candidates = [f for f in os.listdir(_pydir) if f.endswith("._pth")] if os.path.isdir(_pydir) else []
+    except Exception as e:
+        _log(f"Khong doc duoc thu muc Python de tim file ._pth: {e}", "warn")
+        return False
+
+    _fixed = False
+    for _fname in _pth_candidates:
+        _fpath = os.path.join(_pydir, _fname)
+        try:
+            with open(_fpath, "r", encoding="utf-8", errors="replace") as f:
+                _content = f.read()
+            if "#import site" in _content:
+                warn(f"Phat hien '{_fname}' dang TAT 'import site' - day la nguyen nhan "
+                     f"pip/thu vien khac 'cai duoc nhung Python khong thay' - dang tu bat lai...")
+                _new_content = _content.replace("#import site", "import site")
+                with open(_fpath, "w", encoding="utf-8") as f:
+                    f.write(_new_content)
+                ok(f"Da bat lai 'import site' trong {_fname}")
+                _fixed = True
+            elif "import site" not in _content:
+                # File ._pth khong co dong import site nao ca (bi thieu hoan
+                # toan, khac voi bi comment) - them vao cuoi file.
+                warn(f"'{_fname}' thieu hoan toan dong 'import site' - dang them vao...")
+                with open(_fpath, "a", encoding="utf-8") as f:
+                    f.write("\nimport site\n")
+                ok(f"Da them 'import site' vao {_fname}")
+                _fixed = True
+        except Exception as e:
+            _log(f"Loi doc/sua {_fpath}: {e}", "warn")
+    return _fixed
+
+
 def _log_pip_diagnostics():
     """FIX v3.68 (theo bao cao khach 2026-07-29, lan 2): khach thu 2 van bi
     loi pip du get-pip.py da chay - nhung log CU chi ghi 1 dong "Van khong
@@ -341,7 +401,20 @@ def _ensure_pip_available():
     dung duoc - bootstrap 1 co che duy nhat khong du manh cho moi truong
     Python bi loi sau. Them co che thu 2 (`python -m ensurepip`, co san
     trong CPython chuan, co che KHAC hoan toan voi get-pip.py) lam du
-    phong, va ghi chan doan chi tiet neu CA 2 deu that bai."""
+    phong, va ghi chan doan chi tiet neu CA 2 deu that bai.
+
+    FIX v3.68 (lan 3, NGUYEN NHAN GOC THAT SU, xac nhan bang chan doan
+    thuc te tu khach): pip da THUC SU duoc cai (file ton tai tren dia)
+    nhung Python khong THAY vi sys.path thieu site-packages - do file
+    "pythonXY._pth" dang TAT "import site" (dac trung cua ban Python
+    "embeddable" ma CaiDat_MagicVoice.bat tu giai nen vao dung duong dan
+    "Python cai binh thuong" khi khach chua co san Python nao). Sua GOC
+    truoc tien: neu _pth dang tat site, tu bat lai - viec nay giai quyet
+    DUNG nguyen nhan that (khong chi rieng pip ma MOI thu vien deu se bi
+    trieu chung y het neu khong sua)."""
+    if _fix_disabled_site_pth() and _pip_version_check():
+        ok("Da sua duoc site bi tat (._pth) - pip da dung duoc ngay, khong can bootstrap them.")
+        return True
     if _pip_version_check():
         return True
 
