@@ -3,6 +3,19 @@ cd /d "%~dp0"
 setlocal enabledelayedexpansion
 
 set "PYW="
+
+REM FIX v3.68 (BUG THAT SU nghiem trong, phat hien 2026-07-29): xem ghi chu
+REM day du o CaiDat_MagicVoice.bat/MagicVoice.vbs - file nay TUNG tu do tim
+REM Python doc lap (thu tu khac cac file kia), co the mo app bang 1 ban
+REM Python KHAC voi ban da duoc cai thu vien vao, gay "No module named ...".
+REM Sua: doc THANG "python_used.txt" (nguon su that duy nhat do CaiDat_
+REM MagicVoice.bat ghi lai) truoc tien.
+if exist "%~dp0python_used.txt" (
+    for /f "usebackq tokens=* delims=" %%v in ("%~dp0python_used.txt") do set "PYW=%%v"
+    if defined PYW if not exist "!PYW!" set "PYW="
+)
+if defined PYW goto :found
+
 if exist "%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Python311\pythonw.exe" set "PYW=C:\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Program Files\Python311\pythonw.exe" set "PYW=C:\Program Files\Python311\pythonw.exe"

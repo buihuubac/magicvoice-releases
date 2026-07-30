@@ -45,8 +45,16 @@ REM === Xoa file .new con du lai (neu co) ===
 for %%f in ("%APPDIR%*.new") do del /F /Q "%%f" >nul 2>&1
 
 REM === Tim pythonw.exe ===
+REM FIX v3.68 (BUG THAT SU nghiem trong, phat hien 2026-07-29): xem ghi chu
+REM day du o CaiDat_MagicVoice.bat/MagicVoice.vbs - doc THANG
+REM "python_used.txt" (nguon su that duy nhat) truoc tien, tranh mo app
+REM bang 1 ban Python KHAC voi ban da duoc cai thu vien vao.
 set "PYW="
-if exist "%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe"
+if exist "%APPDIR%python_used.txt" (
+    set /p PYW=<"%APPDIR%python_used.txt"
+    if defined PYW if not exist "!PYW!" set "PYW="
+)
+if not defined PYW if exist "%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe" set "PYW=%LOCALAPPDATA%\Programs\Python\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Python311\pythonw.exe" set "PYW=C:\Python311\pythonw.exe"
 if not defined PYW if exist "C:\Program Files\Python311\pythonw.exe" set "PYW=C:\Program Files\Python311\pythonw.exe"
 if not defined PYW if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python311\pythonw.exe" set "PYW=%USERPROFILE%\AppData\Local\Programs\Python\Python311\pythonw.exe"

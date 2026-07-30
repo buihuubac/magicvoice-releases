@@ -135,6 +135,29 @@ goto :py_found
 :py_found
 for /f "tokens=*" %%v in ('!PY311! --version 2^>^&1') do echo   Dung: %%v
 
+REM FIX v3.68 (BUG THAT SU nghiem trong, phat hien 2026-07-29 tu khach van
+REM bao "No module named 'requests'" DU BAN VA PIP DA CAI DUNG): CaiDat_
+REM MagicVoice.bat (file nay) va MagicVoice.vbs (file mo app) co 2 BO LOGIC
+REM DO TIM PYTHON DOC LAP, KHAC THU TU UU TIEN NHAU (.bat: "py -3.11" launcher
+REM TRUOC, duong dan cung TRUOC SAU; .vbs: duong dan cung TRUOC, "py -3.11"
+REM launcher SAU CUNG). May khach co >= 2 ban Python 3.11 (rat pho bien: cai
+REM tu python.org + Microsoft Store, hoac cai lai nhieu lan) -> .bat cai het
+REM thu vien vao ban A (qua py launcher), nhung .vbs lai mo app bang ban B
+REM (qua duong dan cung, chua tung duoc cai gi) -> "No module named ..." DU
+REM setup_helper.py bao THANH CONG that su. Day la nguyen nhan he thong, co
+REM the xay ra voi BAT KY khach nao co nhieu Python, khong phai loi rieng 1
+REM may. Sua GOC: ghi lai CHINH XAC duong dan python.exe DA DUNG THAT (resolve
+REM qua sys.executable, khong con la chuoi "py -3.11" mo ho) ra file
+REM "python_used.txt" - MagicVoice.vbs se doc THANG file nay dau tien thay vi
+REM tu do tim lai doc lap, dam bao cai dau thi mo do, khong con 2 nguon su
+REM that mau thuan nhau.
+for /f "tokens=*" %%e in ('!PY311! -c "import sys; print(sys.executable)" 2^>nul') do set "PY_RESOLVED=%%e"
+if defined PY_RESOLVED (
+    set "PYW_RESOLVED=!PY_RESOLVED:python.exe=pythonw.exe!"
+    > "%~dp0python_used.txt" echo !PYW_RESOLVED!
+    echo   Da ghi python_used.txt: !PYW_RESOLVED!
+)
+
 REM FIX v3.66 (5): truoc day buoc bo sung tkinter CHI chay khi vua giai nen
 REM Python moi tinh - neu Python DA CO SAN tu 1 lan cai TRUOC (truoc khi
 REM em them tkinter vao ban dong goi), cac nhanh phat hien o tren (py

@@ -15,6 +15,25 @@ Dim sLocal : sLocal = oShell.ExpandEnvironmentStrings("%LOCALAPPDATA%")
 Dim sUser  : sUser  = oShell.ExpandEnvironmentStrings("%USERPROFILE%")
 
 Dim PYW : PYW = ""
+
+' FIX v3.68 (BUG THAT SU nghiem trong, phat hien 2026-07-29): truoc day file
+' nay TU DO TIM Python doc lap voi CaiDat_MagicVoice.bat (thu tu uu tien
+' KHAC NHAU giua 2 file) - may khach co >=2 ban Python 3.11 co the bi cai
+' thu vien vao 1 ban nhung mo app bang ban KHAC (chua cai gi), gay
+' "No module named ..." du cai dat da bao thanh cong. Sua GOC: doc THANG
+' file "python_used.txt" ma CaiDat_MagicVoice.bat da ghi lai duong dan
+' CHINH XAC vua dung de cai thu vien - day la NGUON SU THAT DUY NHAT, uu
+' tien tuyet doi truoc moi logic do tim khac ben duoi (chi dung lam du
+' phong cho khach dang o ban cai cu chua co file nay).
+Dim usedFile : usedFile = strDir & "python_used.txt"
+If fso.FileExists(usedFile) Then
+    Dim tsUsed, sUsedPath
+    Set tsUsed = fso.OpenTextFile(usedFile, 1)
+    sUsedPath = Trim(tsUsed.ReadLine())
+    tsUsed.Close
+    If sUsedPath <> "" And fso.FileExists(sUsedPath) Then PYW = sUsedPath
+End If
+
 Dim paths(5)
 paths(0) = sLocal & "\Programs\Python\Python311\pythonw.exe"
 paths(1) = "C:\Python311\pythonw.exe"
@@ -23,9 +42,11 @@ paths(3) = sUser & "\AppData\Local\Programs\Python\Python311\pythonw.exe"
 paths(4) = "C:\Users\Default\AppData\Local\Programs\Python\Python311\pythonw.exe"
 
 Dim i
-For i = 0 To 4
-    If fso.FileExists(paths(i)) Then PYW = paths(i) : Exit For
-Next
+If PYW = "" Then
+    For i = 0 To 4
+        If fso.FileExists(paths(i)) Then PYW = paths(i) : Exit For
+    Next
+End If
 
 ' Fallback: hoi py launcher
 ' (On Error Resume Next da bat toan cuc o dau file - khong can bat/tat lai
