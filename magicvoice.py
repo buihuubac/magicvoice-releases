@@ -4,6 +4,32 @@ if __name__ == "__main__":
     _base0 = _os.path.dirname(_os.path.abspath(__file__))
     _log0  = _os.path.join(_base0, "error_log.txt")
 
+    # FIX v3.68 (bug he thong CUNG LOAI voi vu pip/_pth truoc do - phat hien
+    # 2026-07-30 tu error_log.txt khach: "ModuleNotFoundError: No module
+    # named 'tkinter'"): CaiDat_MagicVoice.bat CO san co che tu bo sung
+    # tkinter (xem FIX v3.66 (5) trong file do), NHUNG co che nay CHI chay
+    # trong luc CAI DAT. Khi khach mo app qua shortcut (MagicVoice.vbs doc
+    # thang python_used.txt roi chay thang "pythonw.exe magicvoice.py"),
+    # buoc kiem tra nay HOAN TOAN BI BO QUA. Neu tkinter bi mat SAU KHI cai
+    # dat da thanh cong (vd antivirus xoa nham tcl86t.dll/tk86t.dll - rat
+    # pho bien voi cac DLL la nay bi heuristic AV nghi ngo), app crash vinh
+    # vien khong co cach tu sua, du khach cai lai bao nhieu lan (setup_helper.py
+    # khong dong toi tkinter, con .bat thi khong duoc chay lai vi Python "co
+    # ve nhu OK"). Sua GOC: tu kiem tra + tu bo sung tkinter O DAY - diem hoi
+    # tu THAT SU cua MOI duong mo app (VBS/Chay_MagicVoice.bat/updater.bat
+    # deu chay toi day dau tien) - truoc ca khi thu import that o duoi.
+    try:
+        import tkinter as _tk_probe  # noqa: F401
+    except ModuleNotFoundError:
+        try:
+            import zipfile as _zf0
+            _tk_zip = _os.path.join(_base0, "_bundled", "tkinter_bundle.zip")
+            if _os.path.isfile(_tk_zip):
+                with _zf0.ZipFile(_tk_zip) as _z0:
+                    _z0.extractall(_sys.prefix)
+        except Exception:
+            pass
+
     # FIX v3.66: TOAN BO khoi tao splash (import tkinter + tao cua so) truoc
     # day KHONG duoc boc chong loi - day la nhung dong dau tien chay khi mo
     # app. Neu "import tkinter" hoac "_tk.Tk()" that bai (vd thieu/hong file
