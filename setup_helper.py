@@ -275,48 +275,120 @@ PY = sys.executable
 # KHONG CO co che tu phat hien/tu sua truong hop nay, du file `get-pip.py`
 # de bootstrap pip da co san trong _bundled/ (dung cho Python embeddable,
 # chua bao gio duoc tan dung cho truong hop nay).
-def _ensure_pip_available():
-    """Kiem tra `python -m pip` co chay duoc khong - neu KHONG (thieu han
-    module pip, khac voi pip cu/loi phien ban), tu bootstrap bang
-    _bundled/get-pip.py di kem san trong goi cai. Goi ham nay TRUOC BAT KY
-    lenh pip nao khac trong file - neu buoc nay that bai, moi buoc sau chac
-    chan that bai giong het nhau, khong can thu tiep lam gi."""
+def _pip_version_check():
+    """Chi kiem tra, khong log gi - dung noi bo cho _ensure_pip_available()."""
     try:
         r = subprocess.run([PY, "-m", "pip", "--version"],
                             capture_output=True, text=True, timeout=30,
                             encoding="utf-8", errors="replace", creationflags=_CFLAGS)
-        if r.returncode == 0:
-            return True
-    except Exception as e:
-        _log(f"pip --version check exception: {e}", "warn")
+        return r.returncode == 0
+    except Exception:
+        return False
 
-    warn("Khong tim thay module 'pip' trong Python — dang tu cai lai (get-pip.py)...")
+
+def _log_pip_diagnostics():
+    """FIX v3.68 (theo bao cao khach 2026-07-29, lan 2): khach thu 2 van bi
+    loi pip du get-pip.py da chay - nhung log CU chi ghi 1 dong "Van khong
+    dung duoc pip sau khi tu sua", KHONG co du du lieu de biet TAI SAO (vd
+    get-pip.py that su cai vao dau, Python dang doc site-packages o dau,
+    co xung dot PYTHONPATH/pth file hay khong). Ghi HET moi thu co the lien
+    quan vao log ngay khi ca 2 co che bootstrap deu that bai, de KHONG BAO
+    GIO roi vao ngo cut "khong biet vi sao" nhu lan truoc nua."""
+    try:
+        r = subprocess.run(
+            [PY, "-c",
+             "import sys, os, site;"
+             "print('executable:', sys.executable);"
+             "print('prefix:', sys.prefix);"
+             "print('base_prefix:', getattr(sys,'base_prefix',None));"
+             "print('sys.path:');"
+             "[print(' ', p) for p in sys.path];"
+             "print('site-packages (getsitepackages):', site.getsitepackages() if hasattr(site,'getsitepackages') else 'N/A');"
+             "print('site-packages (getusersitepackages):', site.getusersitepackages());"
+             "print('ENABLE_USER_SITE:', site.ENABLE_USER_SITE)"
+             ],
+            capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace", creationflags=_CFLAGS)
+        _log("── CHAN DOAN PIP (moi truong Python) ──")
+        _log(r.stdout)
+        if r.stderr:
+            _log(f"stderr: {r.stderr}", "warn")
+    except Exception as e:
+        _log(f"Khong lay duoc chan doan moi truong: {e}", "warn")
+
+    # Liet ke thu muc site-packages that su tren dia - kiem tra co file pip
+    # nao ton tai vat ly khong (phan biet "khong cai duoc" vs "cai roi nhung
+    # Python khong thay").
+    try:
+        _pydir = os.path.dirname(PY)
+        for _cand in [os.path.join(_pydir, "Lib", "site-packages"),
+                      os.path.join(_pydir, "..", "Lib", "site-packages")]:
+            if os.path.isdir(_cand):
+                _entries = [e for e in os.listdir(_cand) if "pip" in e.lower()]
+                _log(f"  {_cand}: {_entries if _entries else '(khong co file pip nao)'}")
+    except Exception as e:
+        _log(f"Khong liet ke duoc site-packages: {e}", "warn")
+
+
+def _ensure_pip_available():
+    """Kiem tra `python -m pip` co chay duoc khong - neu KHONG (thieu han
+    module pip, khac voi pip cu/loi phien ban), tu bootstrap. Goi ham nay
+    TRUOC BAT KY lenh pip nao khac trong file - neu buoc nay that bai, moi
+    buoc sau chac chan that bai giong het nhau, khong can thu tiep lam gi.
+
+    FIX v3.68 (lan 2, theo bao cao khach 2026-07-29): 1 khach van that bai
+    SAU KHI get-pip.py bao "chay xong" (returncode 0) nhung pip van khong
+    dung duoc - bootstrap 1 co che duy nhat khong du manh cho moi truong
+    Python bi loi sau. Them co che thu 2 (`python -m ensurepip`, co san
+    trong CPython chuan, co che KHAC hoan toan voi get-pip.py) lam du
+    phong, va ghi chan doan chi tiet neu CA 2 deu that bai."""
+    if _pip_version_check():
+        return True
+
+    warn("Khong tim thay module 'pip' trong Python — dang tu cai lai...")
+
+    # Co che 1: get-pip.py dong goi san trong _bundled/ (khong can mang).
     _get_pip = os.path.join(BASE_DIR, "_bundled", "get-pip.py")
-    if not os.path.isfile(_get_pip):
-        err(f"Khong tim thay {_get_pip} de tu sua — can cai lai Python thu cong")
-        return False
-    try:
-        r2 = subprocess.run([PY, _get_pip, "--quiet"],
-                             capture_output=True, text=True, timeout=180,
-                             encoding="utf-8", errors="replace", creationflags=_CFLAGS)
-        if r2.returncode != 0:
-            err(f"get-pip.py that bai: {r2.stderr[-300:]}")
-            return False
-    except Exception as e:
-        err(f"get-pip.py exception: {e}")
-        return False
+    if os.path.isfile(_get_pip):
+        try:
+            info("  Thu cach 1: get-pip.py...")
+            r2 = subprocess.run([PY, _get_pip],
+                                 capture_output=True, text=True, timeout=180,
+                                 encoding="utf-8", errors="replace", creationflags=_CFLAGS)
+            _log(f"get-pip.py returncode={r2.returncode}")
+            if r2.stdout: _log(f"get-pip.py stdout: {r2.stdout[-1500:]}")
+            if r2.stderr: _log(f"get-pip.py stderr: {r2.stderr[-1500:]}", "warn")
+            if _pip_version_check():
+                ok("Da tu cai lai pip thanh cong (get-pip.py)")
+                return True
+            warn("  get-pip.py chay xong nhung pip van khong dung duoc - thu cach khac...")
+        except Exception as e:
+            _log(f"get-pip.py exception: {e}", "warn")
+    else:
+        warn(f"  Khong tim thay {_get_pip} - bo qua cach 1")
 
-    # Xac nhan lai sau khi bootstrap
+    # Co che 2: `python -m ensurepip` - module chuan co san trong CPython
+    # (tru ban embeddable/distro co chu dong strip bo), co che HOAN TOAN
+    # KHAC get-pip.py (doc pip wheel dong goi san BEN TRONG chinh Python,
+    # khong phai file rieng) - neu get-pip.py that bai vi ly do gi (quyen
+    # ghi, antivirus chan, __pip-runner__ xung dot...), ensurepip co the
+    # van hoat dong vi di duong hoan toan khac.
     try:
-        r3 = subprocess.run([PY, "-m", "pip", "--version"],
-                             capture_output=True, text=True, timeout=30,
+        info("  Thu cach 2: python -m ensurepip...")
+        r4 = subprocess.run([PY, "-m", "ensurepip", "--default-pip"],
+                             capture_output=True, text=True, timeout=120,
                              encoding="utf-8", errors="replace", creationflags=_CFLAGS)
-        if r3.returncode == 0:
-            ok("Da tu cai lai pip thanh cong")
+        _log(f"ensurepip returncode={r4.returncode}")
+        if r4.stdout: _log(f"ensurepip stdout: {r4.stdout[-1500:]}")
+        if r4.stderr: _log(f"ensurepip stderr: {r4.stderr[-1500:]}", "warn")
+        if _pip_version_check():
+            ok("Da tu cai lai pip thanh cong (ensurepip)")
             return True
     except Exception as e:
-        _log(f"pip --version recheck exception: {e}", "warn")
-    err("Van khong dung duoc pip sau khi tu sua")
+        _log(f"ensurepip exception: {e}", "warn")
+
+    err("Van khong dung duoc pip sau khi thu ca 2 cach tu sua.")
+    _log_pip_diagnostics()
     return False
 
 def _pip(args, timeout=360, retries=2):
