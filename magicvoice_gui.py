@@ -12386,13 +12386,13 @@ def _main_entry():
 
         win = _tk.Tk()
         win.title("MagicVoice TTS Studio")
-        win.geometry("440x668")
+        win.geometry("440x692")
         win.configure(bg="#0f1117")
         win.resizable(False,False)
         win.update_idletasks()
         x = (win.winfo_screenwidth()-440)//2
-        y = (win.winfo_screenheight()-668)//2
-        win.geometry(f"440x668+{x}+{y}")
+        y = (win.winfo_screenheight()-692)//2
+        win.geometry(f"440x692+{x}+{y}")
         try:
             ico = _P(__file__).parent / "MagicVoice.ico"
             if ico.exists():
@@ -12401,7 +12401,7 @@ def _main_entry():
                 win.after(0, lambda: win.iconbitmap(default=ico_str))
         except: pass
 
-        c = _tk.Canvas(win,width=440,height=668,bg="#0f1117",highlightthickness=0)
+        c = _tk.Canvas(win,width=440,height=692,bg="#0f1117",highlightthickness=0)
         c.pack(fill="both",expand=True)
         c.create_oval(-60,-60,200,200,fill="#1a1040",outline="")
         c.create_oval(280,-40,520,200,fill="#0d1535",outline="")
@@ -12526,7 +12526,20 @@ def _main_entry():
         bq = _tk.Button(c,text="💳  Gia Hạn Tài Khoản — 300k/30 ngày",command=open_qr,font=("Segoe UI",9,"bold"),bg="#f59e0b",fg="white",relief="flat",cursor="hand2",activebackground="#fbbf24")
         c.create_window(220,592,window=bq,width=280,height=32)
 
-        c.create_text(220,636,text="🎁 Dùng thử? Liên hệ Zalo để được hỗ trợ",font=("Segoe UI",8),fill="#6b7280")
+        # FIX (bao mat 2026-08-14, theo yeu cau anh Bac): TRUOC DAY
+        # check_for_update() CHI duoc goi sau khi dang nhap thanh cong (trong
+        # App.__init__, xem self.after(3000, ...) o duoi) - neu server tu
+        # choi dang nhap vi client qua cu (vd sau nay bat lai chan version),
+        # khach KHONG BAO GIO thay duoc nut "Cap Nhat Ngay" o dau ca, bi ket
+        # cung hoan toan (da xay ra that khi test chan version lan dau).
+        # Gio them nut NOI BAT (theo yeu cau anh Bac "khach con biet chu")
+        # o man hinh dang nhap (khong phu thuoc dang nhap thanh cong) + van
+        # tu dong kiem tra ngam + tu hien popup khi mo app (silent=True).
+        def _manual_check_update():
+            check_for_update(win, silent=False)
+        cu = _tk.Button(c,text="🔄  Kiểm Tra Cập Nhật",command=_manual_check_update,font=("Segoe UI",9,"bold"),bg="#10b981",fg="white",relief="flat",cursor="hand2",activebackground="#34d399")
+        c.create_window(220,636,window=cu,width=280,height=32)
+        win.after(1500, lambda: check_for_update(win, silent=True))
 
         win.protocol("WM_DELETE_WINDOW",win.destroy)
         win.bind("<Return>",login)
