@@ -47,6 +47,17 @@ if __name__ == "__main__":
         import tkinter as _tk
         import tkinter.messagebox  # khong tu co san chi voi "import tkinter"
         _splash = _tk.Tk()
+        # FIX (bao cao khach 2026-08-14): splash truoc day KHONG set icon,
+        # khien taskbar hien icon Python mac dinh thay vi MagicVoice.ico
+        # trong luc splash con hien (truoc khi man dang nhap thay the) -
+        # lech voi icon shortcut Desktop. Set giong het cach man dang nhap/
+        # app chinh dang lam trong magicvoice_gui.py.
+        try:
+            _ico_path = _os.path.join(_base0, "MagicVoice.ico")
+            if _os.path.exists(_ico_path):
+                _splash.iconbitmap(default=_ico_path)
+        except Exception:
+            pass
         _splash.overrideredirect(True)
         _splash.configure(bg="#0f1117")
         _sw, _sh = 340, 140

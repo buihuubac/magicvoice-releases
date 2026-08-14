@@ -33,10 +33,37 @@ for _stream_name in ("stdout", "stderr"):
         except Exception:
             pass
 
+# ── FIX v3.68 (theo bao cao khach 2026-07-26): "urlopen error [SSL:
+# CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local
+# issuer certificate" khi bam "Cap Nhat Ngay" - toan bo app dung urllib.request
+# TRUC TIEP (khong qua requests) de tai model/update, dua vao SSL context
+# MAC DINH cua Python. Tren mot so may khach (dac biet Python embeddable/
+# portable hoac Windows thieu cap nhat goc chung chi), context mac dinh
+# KHONG tim thay chuoi chung thuc CA cua GitHub -> tai that bai o MOI lan
+# update, khach khong tu go duoc (loi xay ra o chinh buoc tai bo cai moi).
+# Fix GOC: cai dat 1 SSL context dung bo chung chi CA cua thu vien `certifi`
+# (da co san tren may vi la dependency giao tiep cua `requests`/nhieu thu
+# vien khac) lam DEFAULT cho toan bo urllib.request trong app - ap dung 1
+# lan duy nhat luc import module nay, KHONG can sua tung noi goi
+# urlopen/urlretrieve (check_for_update, _do_update, tai model Google Drive...).
+# An toan tuyet doi: neu certifi chua co san (chua tung xay ra tren may da
+# test), bo qua lang, giu nguyen hanh vi SSL mac dinh nhu truoc.
+def _install_certifi_ssl_context():
+    try:
+        import ssl, certifi, urllib.request
+        _ctx = ssl.create_default_context(cafile=certifi.where())
+        _https_handler = urllib.request.HTTPSHandler(context=_ctx)
+        urllib.request.install_opener(urllib.request.build_opener(_https_handler))
+    except Exception:
+        pass
+_install_certifi_ssl_context()
+
 # ── Patch torchaudio.load để tránh lỗi TorchCodec trên các máy chưa cài ──
 def _patch_torchaudio():
     try:
         import torchaudio as _ta
+        if not hasattr(_ta, "load"):
+            return
         _original_load = _ta.load
 
         def _safe_load(uri, *args, **kwargs):
@@ -60,12 +87,30 @@ def _patch_torchaudio():
     except ImportError:
         pass
 
-_patch_torchaudio()
+# FIX (toi uu toc do 2026-08-14, theo bao cao anh Bac "mo app rat lau"):
+# _patch_torchaudio() import torchaudio - thu vien NANG NHAT trong toan bo
+# app (co the mat vai giay den vai chuc giay tuy may) - truoc day goi
+# THANG o day (module-level, chay dong bo NGAY khi import module nay),
+# chan toan bo tien trinh TRUOC CA khi man hinh dang nhap kip hien ra.
+# Torchaudio.load() (ham duoc patch) chi thuc su duoc goi luc TAO VOICE
+# (sau khi dang nhap + tai model xong, ban than buoc tai model da import
+# torch/mat nhieu thoi gian hon nhieu) - nen KHONG can patch xong truoc
+# khi hien login. Chuyen sang chay nen (thread rieng) de import nang
+# nay chay SONG SONG voi luc hien man dang nhap, khong con chan nua.
+import threading as _th_patch_early
+_th_patch_early.Thread(target=_patch_torchaudio, daemon=True).start()
 try:
     from script_processor import optimize_for_tts, preview_script
     HAS_SCRIPT_PROC = True
 except ImportError:
     HAS_SCRIPT_PROC = False
+
+try:
+    import ghep_video_core as _ghep
+    _ghep.resolve_tools()
+    HAS_GHEP = True
+except ImportError:
+    HAS_GHEP = False
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -141,15 +186,16 @@ P = {
 
 # Dùng resolve() để luôn lấy đường dẫn TUYỆT ĐỐI, bất kể chạy từ đâu
 _SCRIPT_DIR    = Path(__file__).resolve().parent
-VOICES_FILE    = _SCRIPT_DIR / "voices_library.json"
-CONFIG_FILE    = _SCRIPT_DIR / "app_config.json"
-CLONE_REFS_DIR = _SCRIPT_DIR / "clone_refs"
+VOICES_FILE      = _SCRIPT_DIR / "voices_library.json"
+CONFIG_FILE      = _SCRIPT_DIR / "app_config.json"
+CLONE_REFS_DIR   = _SCRIPT_DIR / "clone_refs"
+PHONETIC_FILE    = _SCRIPT_DIR / "phonetic_dict.json"
 
 def load_config() -> dict:
     """Đọc cấu hình đã lưu."""
-    defaults = {"device": "cpu", "dtype": "float16",
+    defaults = {"dtype": "float32",
                 "out_dir": str(Path.home()/"Downloads"/"MagicVoice"),
-                "fmt": ".mp3", "steps": 16, "auto_load": True}
+                "fmt": ".mp3", "steps": 24, "auto_load": True}
     if CONFIG_FILE.exists():
         try:
             saved = json.loads(CONFIG_FILE.read_text("utf-8"))
@@ -177,20 +223,20 @@ def style_btn(w, kind="default"):
     styles = {
         "default": dict(bg=P["white"], fg=P["label"], relief="flat",
                         highlightthickness=1, highlightbackground=P["border2"],
-                        activebackground=P["hover"], activeforeground=P["purple"],
-                        cursor="hand2", font=(FN, 9)),
+                        activebackground=P["sel"], activeforeground=P["purple"],
+                        cursor="hand2", font=(FN, 9), padx=10, pady=4),
         "primary": dict(bg=P["purple"], fg="#fff", relief="flat",
                         highlightthickness=0,
-                        activebackground=P["purple2"], activeforeground="#fff",
-                        cursor="hand2", font=(FN, 11, "bold")),
+                        activebackground="#3b60e0", activeforeground="#fff",
+                        cursor="hand2", font=(FN, 11, "bold"), padx=14, pady=6),
         "ghost":   dict(bg=P["bg"], fg=P["sub"], relief="flat",
                         highlightthickness=0,
-                        activebackground=P["hover"], activeforeground=P["purple"],
-                        cursor="hand2", font=(FN, 9)),
+                        activebackground=P["sel"], activeforeground=P["purple"],
+                        cursor="hand2", font=(FN, 9), padx=10, pady=4),
         "tag":     dict(bg=P["sel"], fg=P["purple"], relief="flat",
                         highlightthickness=0,
-                        activebackground=P["hover"], activeforeground=P["grad1"],
-                        cursor="hand2", font=(FN, 8)),
+                        activebackground=P["purple"], activeforeground="#fff",
+                        cursor="hand2", font=(FN, 8), padx=8, pady=3),
         "danger":  dict(bg="#fef2f2", fg=P["red"], relief="flat",
                         highlightthickness=1, highlightbackground="#fca5a5",
                         activebackground="#fee2e2", activeforeground=P["red"],
@@ -206,7 +252,12 @@ class VoiceProfile:
     ref_audio: str = ""
     ref_text:  str = ""
     instruct:  str = ""
-    lang:      str = "vi"
+    # FIX v3.65 (9): mac dinh RONG (khong phai "vi") - rong nghia la "chua
+    # chon tuong minh, dung heuristic doan cu (ten/instruct)" de tuong thich
+    # nguoc voi cac voice da luu truoc khi co tinh nang chon ngon ngu nay.
+    # Neu mac dinh la "vi" se gia dinh SAI cho moi voice cu chua tung set
+    # field nay (kem ca voice tieng Anh/nuoc khac da luu truoc do).
+    lang:      str = ""
     speed:     float = 1.0
     volume:    float = 1.0
     pitch:     float = 1.0
@@ -222,6 +273,141 @@ def srt_ms(t):
     t = t.strip().replace(",",".")
     h,m,s = t.split(":")
     return int((int(h)*3600+int(m)*60+float(s))*1000)
+
+def _ms_to_srt_ts(ms: int) -> str:
+    """Nghich dao cua srt_ms(): so ms -> chuoi 'HH:MM:SS,mmm' chuan SRT."""
+    ms = max(0, int(round(ms)))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, ms  = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _split_text_for_sub(text: str, max_words: int = 8, max_chars: int = 40):
+    """FIX v3.67 (2026-07-25, theo yeu cau anh Bac): tach 1 doan text dai
+    thanh cac cum NGAN kieu CapCut/YouTube auto-caption, de khong tran man
+    hinh. Ap dung 2 chien luoc tuy ngon ngu (tu dong nhan biet, KHONG can
+    biet truoc ngon ngu la gi):
+
+    (A) Ngon ngu CO khoang trang giua tu (Anh, Viet, Han Quoc...): tach
+        theo TU, gioi han BOI CA HAI - toi da max_words tu VA toi da
+        max_chars ky tu (dieu kien nao cham truoc thi cat) - uu tien cat
+        sau dau cau (.!?,;:) neu diem do nam gan nguong.
+
+    (B) Ngon ngu KHONG dung khoang trang giua tu (Nhat, Thai, Trung...):
+        text.split() se chi ra 1 "tu" duy nhat (ca cau dinh lien khong co
+        khoang trang) - phat hien truong hop nay (so tu qua it so voi do
+        dai chuoi) va CHUYEN SANG cat truc tiep theo SO KY TU (max_chars),
+        uu tien cat sau dau cau ban ngu (.!?,、。！？，) neu gan nguong.
+
+    Ham THUAN, chi xu ly chuoi - khong lien quan am thanh. Tra ve list[str]
+    (khong bao gio rong neu text khong rong)."""
+    text = text.strip()
+    if not text:
+        return []
+
+    words = text.split()
+    _avg_word_len = len(text) / max(1, len(words))
+    _has_real_spacing = len(words) > 1 and _avg_word_len <= (max_chars / 2)
+
+    _PUNCT = ".!?,;:、。！？，．"
+
+    if _has_real_spacing:
+        # --- Chien luoc (A): tach theo tu, gioi han ca so tu lan so ky tu ---
+        chunks = []
+        i = 0
+        n = len(words)
+        while i < n:
+            j = i
+            cur_len = 0
+            cut = None
+            while j < n:
+                add_len = len(words[j]) + (1 if j > i else 0)
+                if cur_len + add_len > max_chars or (j - i) >= max_words:
+                    break
+                cur_len += add_len
+                if words[j] and words[j][-1] in _PUNCT and (j - i) >= max(1, max_words - 3):
+                    cut = j + 1
+                j += 1
+            end = cut if cut else max(j, i + 1)
+            chunks.append(" ".join(words[i:end]))
+            i = end
+        return chunks
+    else:
+        # --- Chien luoc (B): ngon ngu khong khoang trang -> cat theo ky tu ---
+        chunks = []
+        i = 0
+        n = len(text)
+        while i < n:
+            end = min(i + max_chars, n)
+            if end < n:
+                best_cut = None
+                for j in range(end - 1, max(i, end - 8) - 1, -1):
+                    if text[j] in _PUNCT:
+                        best_cut = j + 1
+                        break
+                if best_cut:
+                    end = best_cut
+            chunks.append(text[i:end].strip())
+            i = end
+        return [c for c in chunks if c]
+
+
+def _export_srt_timeline(entries_data, gap_ms: float, out_srt_path: str, max_words_per_line: int = 8, max_chars_per_line: int = 40):
+    """FIX v3.67 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): xuat file
+    .srt co timeline khop CHINH XAC voi audio vua tao (SRT goc bi lech vi
+    giong doc tu nhien nhanh/cham khac SRT goc). Text goc cua entry (KHONG
+    transcribe/Whisper) - chuan 100%, ap moi ngon ngu - duoc TACH NHO thanh
+    nhieu dong sub ngan (~max_words_per_line tu/dong, kieu CapCut) de khong
+    tran man hinh, thay vi 1 entry dai = 1 dong sub dai nhu truoc.
+
+    entries_data: list[(text_goc: str, dur_giay: float)] - CHI cac entry
+        DA TAO THANH CONG (entry loi/khong co audio da bi loai truoc khi
+        truyen vao day, khong lam lech cong don cac entry sau).
+    gap_ms: gap dong theo cai dat khach (self.gap_var.get()) tai thoi diem
+        chay - doi don vi giay ngay trong ham.
+    Cong thuc entry-level (END TIME kieu (1) - chu het dung luc het tieng,
+    gap la khoang trong KHONG sub, giua end[i] va start[i+1]):
+        start[0] = 0
+        end[i]     = start[i] + dur_that[i]
+        start[i+1] = end[i] + G   (G = gap_ms/1000, entry cuoi KHONG cong gap sau)
+    Trong 1 entry, KHONG co timestamp that cho tung cum nho (khong dung
+    Whisper/forced-alignment de giu text goc 100%) - thoi luong entry duoc
+    CHIA THEO TY LE SO KY TU cua tung cum (cum dai hon duoc nhieu thoi gian
+    hon) - uoc luong hop ly nhat khi khong co timestamp per-tu that, tong
+    thoi luong cac cum trong 1 entry LUON = dung dur_that[i] (khong lech).
+    Day la ham THUAN (khong doc/ghi self.*, khong dung Backend.gen) - chi
+    doc do dai da do san + gap - hoan toan tach biet luong tao voice.
+    """
+    G = max(0.0, gap_ms) / 1000.0
+    lines = []
+    t_cur = 0.0
+    idx = 0
+    for text, dur in entries_data:
+        if dur is None or dur <= 0:
+            continue
+        sub_chunks = _split_text_for_sub(text, max_words_per_line, max_chars_per_line)
+        if not sub_chunks:
+            continue
+        char_counts = [max(1, len(c)) for c in sub_chunks]
+        total_chars = sum(char_counts)
+        t_local = t_cur
+        n_sub = len(sub_chunks)
+        for si, (chunk_text, cc) in enumerate(zip(sub_chunks, char_counts)):
+            idx += 1
+            sub_dur = dur * cc / total_chars
+            sub_start = t_local
+            # Dong sub CUOI cung cua entry: chot dung end[i] = start[i]+dur_that
+            # (tranh sai so cong don lam tren/lam tron qua nhieu dong).
+            sub_end = (t_cur + dur) if si == n_sub - 1 else (t_local + sub_dur)
+            lines.append(f"{idx}\n{_ms_to_srt_ts(sub_start * 1000)} --> {_ms_to_srt_ts(sub_end * 1000)}\n{chunk_text}\n")
+            t_local = sub_end
+        t_cur = t_cur + dur + G
+    content = "\n".join(lines).strip() + "\n"
+    with open(out_srt_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
+    return out_srt_path, idx
+
 
 def parse_srt(txt):
     """Parse SRT - chap nhan ca SRT co va khong co dong trong giua entries."""
@@ -284,7 +470,7 @@ class VoiceLib:
                             ref_audio= str(d.get("ref_audio", "")),
                             ref_text = str(d.get("ref_text", "")),
                             instruct = str(d.get("instruct", "")),
-                            lang     = str(d.get("lang", "vi")),
+                            lang     = str(d.get("lang", "")),
                             speed    = float(d.get("speed", 1.0)),
                             volume   = float(d.get("volume", 1.0)),
                             pitch    = float(d.get("pitch", 1.0)),
@@ -293,7 +479,9 @@ class VoiceLib:
                         )
                         loaded.append(vp)
                     if loaded:
-                        self.profiles = loaded
+                        # Loc bo Auto voice cu (neu co trong library cu)
+                        self.profiles = [vp for vp in loaded if vp.mode != "auto"]
+                        self._migrate_voices()
                         return
             except Exception as e:
                 # KHÔNG đổi tên/xóa file - giữ nguyên để debug
@@ -301,17 +489,34 @@ class VoiceLib:
                 print(f"[VoiceLib] File: {VOICES_FILE}")
 
         # Tạo mặc định nếu chưa có file (lần đầu dùng)
-        self.profiles = [
-            VoiceProfile("Auto", "auto", note="Giọng tự động"),
-            VoiceProfile("Nữ trẻ Anh", "design",
-                         instruct="female, young, british accent",
-                         lang="en", note="British English"),
-            VoiceProfile("Nam trưởng thành", "design",
-                         instruct="male, middle aged, american accent",
-                         lang="en", note="American English"),
-        ]
-        # Chỉ save nếu file thực sự chưa tồn tại
+        self.profiles = []
+        self._add_edge_defaults()
         if not VOICES_FILE.exists():
+            self.save()
+
+    _EDGE_DEFAULTS = [
+        ("Aria - Nu My",  "en-US-AriaNeural",   "Nu My tu nhien, tre trung"),
+        ("Andrew - Nam My", "en-US-AndrewNeural", "Nam My am, tu nhien"),
+    ]
+
+    def _add_edge_defaults(self):
+        for _name, _code, _note in self._EDGE_DEFAULTS:
+            self.profiles.append(VoiceProfile(
+                name=_name, mode='edge',
+                ref_audio=_code, instruct='edge:' + _code, note=_note))
+
+    def _migrate_voices(self):
+        _old = {'Nu tre Anh', 'Nam truong thanh', 'Nữ trẻ Anh', 'Nam trưởng thành'}
+        changed = False
+        new_list = [p for p in self.profiles
+                    if not (p.mode == 'design' and p.name in _old)]
+        if len(new_list) != len(self.profiles):
+            self.profiles = new_list
+            changed = True
+        if not any(p.mode == 'edge' for p in self.profiles):
+            self._add_edge_defaults()
+            changed = True
+        if changed:
             self.save()
 
     def _localize_ref_audio(self, vp):
@@ -430,7 +635,7 @@ def narrator_preprocess(txt):
     import re as _re
     result = []
     # Tach theo dau cau, giu dau
-    tokens = _re.split(r'([.!?,;])', txt)
+    tokens = _re.split(r'([.!?,;:])', txt)
     buf = ""
     pause = 0.0
     for tok in tokens:
@@ -441,12 +646,16 @@ def narrator_preprocess(txt):
             buf = ""; pause = 0.0
         elif tok == ',':
             buf = (buf + tok).strip()
-            if len(buf) > 20:
-                result.append((buf, 0.3))
+            if len(buf) > 12:
+                result.append((buf, 0.22))
                 buf = ""
         elif tok == ';':
             if buf.strip():
                 result.append((buf.strip(), 0.45))
+            buf = ""
+        elif tok == ':':
+            if buf.strip():
+                result.append((buf.strip() + ":", 0.35))
             buf = ""
         else:
             buf = (buf + " " + tok).strip() if buf else tok.strip()
@@ -468,9 +677,10 @@ def narrator_preprocess(txt):
 
 # ══════════ BACKEND ══════════
 class Backend:
-    _model    = None
-    _offline  = False   # True = offline mode, set boi App._apply_network_mode()
-    _gen_lock = None
+    _model         = None
+    _offline       = False   # True = offline mode, set boi App._apply_network_mode()
+    _gen_lock      = None
+    _loaded_device = None    # Device model da duoc load voi
 
     @classmethod
     def _get_lock(cls):
@@ -488,13 +698,44 @@ class Backend:
         dt={"float32":torch.float32,"float16":torch.float16,"bfloat16":torch.bfloat16}[dtype_str]
         cls._model=MagicVoice.from_pretrained("k2-fsa/OmniVoice",device_map=device,dtype=dt)
         # torch.compile tăng tốc ~30% sau lần warm-up đầu (PyTorch 2.x+)
+        # FIX v3.66 (2026-07-24, theo yeu cau anh Bac - "van cham du giam
+        # cau hinh"): torch.compile() can Triton de hoat dong - Triton HO
+        # TRO WINDOWS con rat han che/hay loi. Da xac nhan THUC TE tren may
+        # dev bang test doc lap (khong dung OmniVoice, chi model gia lap de
+        # tranh rui ro): torch.compile() wrap khong loi ngay, nhung LAN GOI
+        # FORWARD DAU TIEN moi bao "TritonMissing: Cannot find a working
+        # triton installation" - tuc la o dung luc Backend.gen() goi model
+        # lan dau, KHONG phai o dong torch.compile() nay (try/except o day
+        # KHONG bat duoc loi that). Neu Triton thieu, moi lan load model deu
+        # ganh chi phi thu/that bai ma khong bao gio dat duoc toc do nhanh
+        # hon nhu quang cao trong log - day rat co the la nguyen nhan chinh
+        # gay cham keo dai, khong lien quan gi den dtype/steps khach chinh.
+        # Gio KIEM TRA Triton co dung duoc THAT SU truoc (khong chi "co cai
+        # dat goi triton" ma phai compile+chay thu 1 ham cuc nho) - CHI goi
+        # torch.compile() cho model that neu that su dung duoc, tranh lap
+        # lai chi phi thu-roi-that-bai nay tren MOI may khach thieu Triton
+        # (rat pho bien tren Windows).
         if "cuda" in device:
+            _triton_usable = False
             try:
-                cls._model = torch.compile(cls._model, mode="reduce-overhead")
-                if log: log("⚡ torch.compile enabled (CUDA)", "ok")
+                import triton  # noqa: F401
+                @torch.compile(mode="reduce-overhead")
+                def _triton_probe(x):
+                    return x + 1
+                _triton_probe(torch.zeros(1, device=device))
+                _triton_usable = True
             except Exception:
-                pass
-        if log: log("✓ Model sẵn sàng!","ok")
+                _triton_usable = False
+            if _triton_usable:
+                try:
+                    if log: log("⚙ Dang bien dich CUDA (torch.compile) — lan dau ~3-5 phut, vui long doi...","warn")
+                    cls._model = torch.compile(cls._model, mode="reduce-overhead")
+                    if log: log("⚡ torch.compile OK — cac lan tao sau se nhanh hon","ok")
+                except Exception:
+                    pass
+            else:
+                if log: log("ℹ torch.compile bo qua (thieu Triton tren may nay) — van chay binh thuong, chi khong co tang toc nay","info")
+        if log: log("✓ Model san sang!","ok")
 
     _seed = 42  # Seed cố định → giọng nhất quán
 
@@ -532,25 +773,91 @@ class Backend:
         # Truyen 2.0 (default) de giu giong tu nhien.
         kw["guidance_scale"] = 2.0
 
-        # v3.37: De OmniVoice TU xu ly ref_audio (bo silence dau/cuoi + them
-        # dau cau cuoi ref_text neu thieu). Tranh loi "them chu/lay hoi dau cau"
-        # do tool tu cat cung ref_audio truoc do. Theo doc:
-        # docs/generation-parameters.md -> preprocess_prompt default True.
-        # Truyen ro de chac chan, va de tool KHONG con tu cat ref_audio nua.
-        kw["preprocess_prompt"] = True
-
         try:
             with _t.inference_mode():
                 try:
                     result = cls._model.generate(**kw)
                 except TypeError as _te:
-                    # Phien ban omnivoice cu khong nhan 1 so param moi
-                    # -> bo lan luot cac param optional roi gen lai.
+                    # Phien ban omnivoice cu khong nhan guidance_scale -> bo va gen lai
                     err_str = str(_te).lower()
                     if "unexpected keyword" in err_str or "got an unexpected" in err_str:
-                        # Bo cac param co the khong ton tai o ban cu (theo thu tu uu tien giu lai)
-                        for _opt in ("preprocess_prompt", "guidance_scale"):
-                            kw.pop(_opt, None)
+                        kw.pop("guidance_scale", None)
+                        result = cls._model.generate(**kw)
+                    else:
+                        raise
+            if _t.cuda.is_available():
+                _t.cuda.empty_cache()
+            return result
+        except RuntimeError as _e:
+            if "out of memory" in str(_e).lower():
+                if _t.cuda.is_available():
+                    _t.cuda.empty_cache()
+                raise RuntimeError(
+                    "CUDA het bo nho (Out of Memory)!\n\n"
+                    "Cach khac phuc:\n"
+                    "  - Giam Steps xuong 4-8\n"
+                    "  - Doi sang float16\n"
+                    "  - Van ban ngan hon (< 200 ky tu)\n"
+                    "  - Doi sang CPU trong Header"
+                )
+            raise
+
+    # FIX v3.66 (hieu nang 2026-07-24, theo yeu cau anh Bac): 2 ham MOI rieng
+    # biet - KHONG sua Backend.gen() o tren mot chu nao (dung y "tuyet doi
+    # khong dung Backend.gen()"). Van de phat hien: Clone Voice truyen
+    # ref_audio (duong dan tho, khong co ref_text) cho MOI CHUNK van ban -
+    # ben trong thu vien omnivoice, moi lan nhu vay se TU DONG phien am lai
+    # (Whisper) + ma hoa lai audio mau TU DAU (xem
+    # omnivoice/models/omnivoice.py, ham create_voice_clone_prompt() goi tu
+    # generate() khi thieu voice_clone_prompt) - van ban cang nhieu chunk,
+    # audio mau cang bi xu ly lai dư thua cang nhieu lan, rat cham. 2 ham
+    # nay cho phep tinh 1 LAN duy nhat (create_voice_clone_prompt) roi tai
+    # su dung cho moi chunk trong cung 1 phien, thay vi truyen lai ref_audio
+    # tho moi lan.
+    _vc_prompt_cache = {}  # {(ref_audio_path, ref_text, mtime): VoiceClonePrompt}
+
+    @classmethod
+    def get_voice_clone_prompt(cls, ref_audio, ref_text=None):
+        """Tinh (hoac lay tu cache) VoiceClonePrompt cho 1 file ref_audio -
+        tranh Whisper transcribe + audio-tokenize lai moi lan goi gen. Cache
+        theo (duong dan, ref_text, mtime file) - tu dong tinh lai neu file
+        audio mau thay doi."""
+        import os as _os_vc
+        if not cls._model: raise RuntimeError('Model chua tai!')
+        try:
+            _mtime = _os_vc.path.getmtime(ref_audio)
+        except Exception:
+            _mtime = 0
+        key = (str(ref_audio), ref_text or "", _mtime)
+        cached = cls._vc_prompt_cache.get(key)
+        if cached is not None:
+            return cached
+        vcp = cls._model.create_voice_clone_prompt(ref_audio=ref_audio, ref_text=ref_text or None)
+        cls._vc_prompt_cache[key] = vcp
+        return vcp
+
+    @classmethod
+    def gen_with_clone_prompt(cls, text, voice_clone_prompt, num_step=16, speed=1.0):
+        """Giong het Backend.gen() ve seed/guidance_scale/error-handling,
+        NHUNG dung voice_clone_prompt DA TINH SAN thay vi ref_audio tho -
+        tranh phien am+ma hoa lai audio mau moi chunk. La ham RIENG, KHONG
+        goi/sua Backend.gen()."""
+        if not cls._model: raise RuntimeError('Model chua tai!')
+        import torch as _t
+        _t.manual_seed(cls._seed)
+        if _t.cuda.is_available():
+            _t.cuda.manual_seed_all(cls._seed)
+            _t.cuda.empty_cache()
+        kw = dict(text=text, num_step=num_step, speed=speed,
+                  voice_clone_prompt=voice_clone_prompt, guidance_scale=2.0)
+        try:
+            with _t.inference_mode():
+                try:
+                    result = cls._model.generate(**kw)
+                except TypeError as _te:
+                    err_str = str(_te).lower()
+                    if "unexpected keyword" in err_str or "got an unexpected" in err_str:
+                        kw.pop("guidance_scale", None)
                         result = cls._model.generate(**kw)
                     else:
                         raise
@@ -576,32 +883,38 @@ class Backend:
 
 
 def _safe_audio_load(path: str):
-    """Load audio an toan - thu nhieu backend de tuong thich moi phien ban torchaudio."""
+    """Load audio an toan. Uu tien soundfile (khong subprocess) de tranh flash tren Windows."""
+    import torch, numpy as _np
+    # 1. soundfile (libsndfile) - pure C, khong spawn subprocess, khong flash
+    try:
+        import soundfile as _sf
+        data, sr = _sf.read(path, dtype='float32', always_2d=True)
+        t = torch.from_numpy(data.T.copy())
+        return t, sr
+    except Exception:
+        pass
+    # 2. scipy fallback - pure Python, khong subprocess
+    try:
+        import scipy.io.wavfile as _wav
+        sr, data = _wav.read(path)
+        if data.dtype == _np.int16:
+            data = data.astype(_np.float32) / 32768.0
+        t = torch.from_numpy(data).unsqueeze(0) if data.ndim == 1 else torch.from_numpy(data.T.copy())
+        return t, sr
+    except Exception:
+        pass
+    # 3. torchaudio - chi dung neu 2 cach tren that bai (ffmpeg backend co the flash)
     import torchaudio
     errors = []
-    # Thu lan luot cac backend
-    for backend in [None, "soundfile", "ffmpeg", "sox"]:
+    for backend in ["soundfile", None, "sox"]:
         try:
             if backend is None:
-                # Mac dinh - thu khong chi dinh backend
                 t, sr = torchaudio.load(path)
             else:
                 t, sr = torchaudio.load(path, backend=backend)
             return t, sr
         except Exception as e:
             errors.append(f"{backend}: {e}")
-            continue
-    # Tat ca that bai - thu scipy
-    try:
-        import scipy.io.wavfile as _wav
-        import torch, numpy as np
-        sr, data = _wav.read(path)
-        if data.dtype == np.int16:
-            data = data.astype(np.float32) / 32768.0
-        t = torch.from_numpy(data).unsqueeze(0) if data.ndim == 1 else torch.from_numpy(data.T)
-        return t, sr
-    except Exception as e:
-        errors.append(f"scipy: {e}")
     raise RuntimeError(f"Khong the load audio {path}:\n" + "\n".join(errors))
 
 def _normalize_instruct(text: str) -> str:
@@ -645,6 +958,24 @@ def _trim_silence(tensor, sr=24000, threshold=0.003, pad_ms=50):
     if start >= end:
         return tensor
     return wav[start:end].unsqueeze(0)
+
+
+def _concat_crossfade(parts, sr=24000, fade_ms=15):
+    """Noi audio voi crossfade ngan o diem noi -> het 'cup/vap'."""
+    import torch
+    if not parts: return None
+    if len(parts) == 1: return parts[0]
+    fade = int(sr * fade_ms / 1000)
+    out = parts[0]
+    for nxt in parts[1:]:
+        is_silence = bool(nxt.abs().max() < 1e-4) or bool(out.abs().max() < 1e-4)
+        n = min(fade, out.shape[-1], nxt.shape[-1])
+        if is_silence or n < 8:
+            out = torch.cat([out, nxt], dim=-1); continue
+        ramp = torch.linspace(0.0, 1.0, n, device=out.device, dtype=out.dtype)
+        mixed = out[..., -n:] * (1.0 - ramp) + nxt[..., :n] * ramp
+        out = torch.cat([out[..., :-n], mixed, nxt[..., n:]], dim=-1)
+    return out
 
 
 def _post_process(tensor, sr=24000):
@@ -708,17 +1039,24 @@ def _get_ffmpeg():
     return "ffmpeg"
 
 def to_mp3(tensor, path):
-    """Luu tensor thanh MP3 320kbps."""
+    """Luu tensor thanh MP3 320kbps. Raise RuntimeError neu khong luu duoc."""
     import torchaudio
     # Dam bao thu muc ton tai
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp.wav"
-    # Luu WAV tam
+    # Luu WAV tam bang soundfile (pure C, khong subprocess, tranh flash Windows)
+    wav_ok = False
     try:
-        torchaudio.save(tmp, tensor, 24000)
-    except Exception:
         import soundfile as _sf
         _sf.write(tmp, tensor.squeeze().cpu().numpy(), 24000)
+        wav_ok = True
+    except Exception as _e1:
+        try:
+            import torchaudio as _ta_mp3
+            _ta_mp3.save(tmp, tensor, 24000)
+            wav_ok = True
+        except Exception as _e2:
+            raise RuntimeError(f"Khong luu duoc WAV tam: soundfile={_e1} | torchaudio={_e2}")
     # Convert sang MP3
     _ffmpeg = _get_ffmpeg()
     _flags = 0x08000000 if os.name == "nt" else 0
@@ -731,24 +1069,46 @@ def to_mp3(tensor, path):
             "-ar", "44100",
             path
         ], capture_output=True, creationflags=_flags)
-        try: os.remove(tmp)
-        except: pass
         if r.returncode != 0:
             raise RuntimeError(r.stderr.decode()[-300:])
-    except (FileNotFoundError, OSError):
-        # ffmpeg khong co → doi duoi .mp3 thanh .wav, giu nguyen WAV da save
+        if not os.path.exists(path):
+            raise RuntimeError("ffmpeg chay OK nhung file MP3 khong duoc tao")
+        try: os.remove(tmp)
+        except: pass
+    except Exception as _fe:
+        # ffmpeg that bai → fallback luu WAV thay the
         wav_path = path.replace(".mp3", ".wav")
-        try:
-            import shutil as _sh
-            _sh.move(tmp, wav_path)
-        except Exception:
-            pass
+        if os.path.exists(tmp):
+            try:
+                import shutil as _sh
+                _sh.move(tmp, wav_path)
+                if not os.path.exists(wav_path):
+                    raise RuntimeError(f"ffmpeg loi: {_fe} | WAV fallback cung that bai")
+                # Thanh cong voi WAV — khong raise, tra ve duong dan WAV
+                return wav_path
+            except Exception as _we:
+                raise RuntimeError(f"ffmpeg loi: {_fe} | WAV fallback loi: {_we}")
+        raise RuntimeError(f"ffmpeg loi: {_fe} | Khong co file WAV tam de fallback")
 
 
 def to_wav(tensor, path):
-    """Lưu tensor thành WAV 32-bit — KHÔNG post-process ở đây."""
-    import torchaudio
-    torchaudio.save(path, tensor, 24000, encoding="PCM_F", bits_per_sample=32)
+    """Lưu tensor thành WAV 32-bit — KHÔNG post-process ở đây.
+    FIX v3.65 (20): torchaudio.save() truc tiep dispatch sang torchcodec
+    backend tren may khong cai torchcodec -> "TorchCodec is required for
+    save_with_torchcodec" (cung lop loi da fix o _gen_one truoc day, nhung
+    to_wav() chua duoc ap dung). Dung soundfile truoc (khong phu thuoc
+    torchcodec), chi fallback torchaudio khi soundfile that bai.
+    """
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    try:
+        import soundfile as _sf
+        _sf.write(path, tensor.squeeze().cpu().numpy(), 24000, subtype="FLOAT")
+    except Exception as _e1:
+        try:
+            import torchaudio
+            torchaudio.save(path, tensor, 24000, encoding="PCM_F", bits_per_sample=32)
+        except Exception as _e2:
+            raise RuntimeError(f"Khong luu duoc WAV: soundfile={_e1} | torchaudio={_e2}")
 
 def _ensure_deps():
     """
@@ -759,7 +1119,8 @@ def _ensure_deps():
 
     REQUIRED = [
         ("firebase_admin", "firebase-admin"),  # Bat buoc cho dang nhap
-        ("omnivoice",      "omnivoice"),        # Bat buoc cho tao voice
+        # omnivoice KHONG import o day: no keo theo torch/torchaudio → neu DLL loi se hien dialog 2 lan
+        # omnivoice duoc kiem tra / cai lai boi setup_helper.py va _auto_repair_model
         ("edge_tts",       "edge-tts"),
         ("soundfile",      "soundfile"),
         ("sounddevice",    "sounddevice"),
@@ -806,6 +1167,77 @@ class RoundedFrame(tk.Canvas):
             r,0, w-r,0, w,r, w,h-r, w-r,h, r,h, 0,h-r, 0,r,
             smooth=True, fill=self._bg, outline=self._bc, width=1)
 
+class _RoundedBtn:
+    """Canvas-based rounded button; .config() compatible with tk.Button API.
+    Dùng cho nút Tạo để có góc bo tròn thật sự."""
+    def __init__(self, parent, text, command, bg="#4f72f5", fg="white",
+                 active_bg="#3b60e0", disabled_bg="#94a3b8",
+                 font=None, padx=24, pady=10, radius=10):
+        self._bg_n  = bg
+        self._bg_a  = active_bg
+        self._bg_d  = disabled_bg
+        self._fg    = fg
+        self._text  = text
+        self._cmd   = command
+        self._font  = font or ("Segoe UI", 12, "bold")
+        self._state = "normal"
+        self._r     = radius
+        import tkinter.font as _tkf
+        _fo = _tkf.Font(family=self._font[0], size=abs(self._font[1]),
+                        weight=self._font[2] if len(self._font) > 2 else "normal")
+        _w  = _fo.measure(text) + padx * 2
+        _h  = _fo.metrics("linespace") + pady * 2
+        try: _pbg = parent.cget("bg")
+        except Exception: _pbg = P["white"]
+        self._c = tk.Canvas(parent, width=_w, height=_h,
+                            cursor="hand2", highlightthickness=0, bd=0, bg=_pbg)
+        self._c.bind("<Configure>",      lambda e: self._draw(self._cur_bg()))
+        self._c.bind("<Enter>",          lambda e: self._on_enter())
+        self._c.bind("<Leave>",          lambda e: self._draw(self._cur_bg()))
+        self._c.bind("<ButtonPress-1>",  lambda e: self._on_press())
+        self._c.bind("<ButtonRelease-1>",lambda e: self._on_release())
+        self._c.after(30, lambda: self._draw(self._cur_bg()))
+
+    def _cur_bg(self):
+        return self._bg_d if self._state == "disabled" else self._bg_n
+
+    def _draw(self, color):
+        c = self._c; c.delete("all")
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 4 or h < 4: return
+        r = min(self._r, w // 2, h // 2)
+        for sx, sy in [(0,0),(w-2*r,0),(0,h-2*r),(w-2*r,h-2*r)]:
+            ext = [90,0,270,180][[(0,0),(w-2*r,0),(0,h-2*r),(w-2*r,h-2*r)].index((sx,sy))]
+            c.create_arc(sx, sy, sx+2*r, sy+2*r, start=ext,
+                         extent=90, fill=color, outline=color)
+        c.create_rectangle(r, 0,   w-r, h,   fill=color, outline=color)
+        c.create_rectangle(0, r,   w,   h-r, fill=color, outline=color)
+        _fg = self._fg if self._state != "disabled" else "#e2e8f0"
+        c.create_text(w//2, h//2, text=self._text, fill=_fg, font=self._font)
+
+    def _on_enter(self):
+        if self._state == "normal": self._draw(self._bg_a)
+    def _on_press(self):
+        if self._state == "normal": self._draw("#2d4ec0")
+    def _on_release(self):
+        self._draw(self._cur_bg())
+        if self._state == "normal" and self._cmd: self._cmd()
+
+    def config(self, cnf=None, **kw):
+        if isinstance(cnf, dict): kw.update(cnf)
+        if "state" in kw: self._state = kw["state"]
+        if "text"  in kw: self._text  = kw["text"]
+        if "bg"    in kw: self._bg_n  = kw["bg"]
+        self._draw(self._cur_bg())
+    configure = config
+
+    def pack(self, **kw):  self._c.pack(**kw)
+    def grid(self, **kw):  self._c.grid(**kw)
+    def cget(self, k):
+        if k == "state": return self._state
+        if k == "text":  return self._text
+        return ""
+
 class ModernSlider(tk.Frame):
     """Slider với label value"""
     def __init__(self, parent, label, var, from_, to, resolution=0.05, **kw):
@@ -834,7 +1266,10 @@ class VoiceDialog(tk.Toplevel):
         super().__init__(parent)
         self.result=None
         self.title("Thêm / Chỉnh sửa Voice")
-        self.geometry("580x600")
+        # FIX v3.65 (10): tang chieu cao 600->660 - sau khi them dong "Ngon
+        # ngu giong" (muc 13) ma khong tang height, nut Luu/Huy bi day ra
+        # ngoai khung nhin thay (anh Bac bao "khung lưu bị ẩn mất").
+        self.geometry("580x660")
         self.configure(bg=P["bg"])
         self.resizable(False,False)
         self.transient(parent)
@@ -877,6 +1312,28 @@ class VoiceDialog(tk.Toplevel):
             highlightthickness=1,highlightbackground=P["border"],
             highlightcolor=P["purple"],width=30).pack(side="left",ipady=4))
 
+        # FIX v3.65 (9): chon TUONG MINH ngon ngu cua giong dang luu - de
+        # nghe thu sau nay KHONG con phai doan qua ten/instruct (de sai, vd
+        # bug "vietnu" nghe ra tieng Anh do doan nham) - _detect_preview_lang()
+        # se uu tien dung gia tri nay neu khac rong. "(Tu dong doan)" = de
+        # trong, giu nguyen hanh vi doan cu (tuong thich nguoc voi voice cu).
+        self._LANG_OPTIONS = [
+            ("(Tự động đoán)", ""),
+            ("Tiếng Việt", "vi"), ("English", "en"), ("日本語 (Nhật)", "ja"),
+            ("한국어 (Hàn)", "ko"), ("中文 (Trung)", "zh"), ("Français (Pháp)", "fr"),
+            ("Deutsch (Đức)", "de"), ("Español (TBN)", "es"), ("ไทย (Thái)", "th"),
+            ("Indonesia", "id"), ("Português (BĐN)", "pt"), ("Italiano (Ý)", "it"),
+            ("Русский (Nga)", "ru"),
+        ]
+        self._lang_label_to_code = dict(self._LANG_OPTIONS)
+        _lang_code_to_label = {v: k for k, v in self._LANG_OPTIONS}
+        self.lang_var = tk.StringVar(
+            value=_lang_code_to_label.get(vp.lang if vp else "", "(Tự động đoán)"))
+        row(body, "Ngôn ngữ giọng:", lambda f: ttk.Combobox(
+            f, textvariable=self.lang_var,
+            values=[lbl for lbl, _ in self._LANG_OPTIONS],
+            state="readonly", font=(FN,9), width=27).pack(side="left", ipady=2))
+
         # Mode tabs
         mode_lf=tk.LabelFrame(body,text="  Chế Độ Giọng  ",
                                font=(FN,9),bg=P["bg"],fg=P["purple"],
@@ -888,8 +1345,7 @@ class VoiceDialog(tk.Toplevel):
         mrow=tk.Frame(mode_lf,bg=P["bg"]); mrow.pack(fill="x",pady=(0,8))
         self._mode_btns={}
         for val,lbl,icon in [("clone","Voice Clone","🎯"),
-                              ("design","Voice Design","✨"),
-                              ("auto","Auto","🎲")]:
+                              ("design","Voice Design","✨")]:
             b=tk.Button(mrow,text=f"{icon} {lbl}",
                         command=lambda v=val:self._set_mode(v),
                         font=(FN,9),relief="flat",cursor="hand2",padx=12,pady=5)
@@ -1387,11 +1843,24 @@ class VoiceDialog(tk.Toplevel):
             mode=self.mode_var.get()
             if mode=="clone" and not self.ref_audio_var.get().strip():
                 messagebox.showwarning("Thiếu audio","Hãy chọn file audio tham chiếu!",parent=self); return
+            # FIX v3.65 (8): CHI luu "instruct" khi mode="design" - day la
+            # truong danh rieng cho Voice Design (mo ta AI bang tieng Anh).
+            # Truoc day luu instruct du dang o mode nao, neu widget con sot
+            # text cu tu luc truoc do dang o tab Design (vd "...british
+            # accent") roi doi qua tab Clone luu, du lieu rac nay se bam
+            # theo profile Clone -> gay nham lan khi nghe thu (tuong la
+            # tieng Anh vi co chu "accent", trong khi Clone thuc te la
+            # giong Viet that).
+            _instruct_to_save = self.instruct_var.get().strip() if mode == "design" else ""
+            # FIX v3.65 (9): luu ngon ngu tuong minh khach da chon (rong neu
+            # chon "(Tu dong doan)" - giu nguyen hanh vi doan cu).
+            _lang_to_save = self._lang_label_to_code.get(self.lang_var.get(), "")
             self.result=VoiceProfile(
             name=name, mode=mode,
             ref_audio=self.ref_audio_var.get().strip(),
             ref_text=self.ref_text_var.get().strip(),
-            instruct=self.instruct_var.get().strip(),
+            instruct=_instruct_to_save,
+            lang=_lang_to_save,
             speed=round(float(self.speed_var.get()), 2),
             volume=round(float(self.vol_var.get()), 2),
             pitch=round(float(self.pitch_var.get()), 2),
@@ -1416,6 +1885,44 @@ def _to_tensor(a):
     return item
 
 
+_fast_pipelines: dict = {}   # cache KPipeline theo lang_code, tranh nap lai model moi lan gen
+
+
+def _fast_generate(text: str, voice_id: str, speed: float = 1.0):
+    """FIX v3.68 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): sinh
+    giong cho mode "MG Nhanh" (ten noi bo/ky thuat: dua tren thu
+    vien kokoro - KHONG duoc de lo ten nay ra UI/log gui khach, xem
+    NOTES_kokoro_feature.md). Day la ham HOAN TOAN RIENG, KHONG dung/sua
+    Backend.gen() hay bat ky logic OmniVoice nao - engine khac hoan toan,
+    chay CPU/GPU tuy may, khong can ref_audio (khong phai voice clone).
+    Tra ve tensor (1, T) @ 24000Hz - dung SR mac dinh cua kokoro, khop
+    luon voi SR chuan cua app (24000), KHONG can resample.
+    Raise RuntimeError voi thong bao ro rang neu thieu thu vien (khach
+    chua cai dat du moi truong)."""
+    try:
+        from kokoro import KPipeline
+    except ImportError as _ie:
+        raise RuntimeError(
+            "Thieu thanh phan cho 'MG Nhanh'. Vui long vao "
+            "'Cai dat lai moi truong (Python/AI)' de cai bo sung."
+        ) from _ie
+    import numpy as _np, torch as _t
+
+    lang_code = _fast_lang_code(voice_id)
+    pipeline = _fast_pipelines.get(lang_code)
+    if pipeline is None:
+        pipeline = KPipeline(lang_code=lang_code)
+        _fast_pipelines[lang_code] = pipeline
+
+    parts = []
+    for result in pipeline(text, voice=voice_id, speed=speed):
+        parts.append(result.audio.numpy() if hasattr(result.audio, "numpy") else _np.asarray(result.audio))
+    if not parts:
+        raise RuntimeError("Khong sinh duoc audio (van ban rong hoac loi noi bo).")
+    audio = _np.concatenate(parts)
+    return _t.from_numpy(audio.copy()).unsqueeze(0).float()
+
+
 def _check_license_gs(username):
     """Check license — delegate sang license_guard.verify_license().
     FAIL-CLOSED: neu module loi/thieu → TU CHOI (khong con fail-open nhu ban cu).
@@ -1429,6 +1936,44 @@ def _check_license_gs(username):
                        "Vui long cai dat lai app. Chi tiet: " + str(_ie))
     except Exception as _e:
         return False, "Loi kiem tra license: " + str(_e)
+
+_phon_cache: dict = {}
+
+def _load_phonetic_dict() -> dict:
+    """Doc phonetic_dict.json, cache theo mtime."""
+    if not PHONETIC_FILE.exists():
+        return {}
+    try:
+        mtime = PHONETIC_FILE.stat().st_mtime
+        if _phon_cache.get('mtime') == mtime:
+            return _phon_cache.get('data', {})
+        data = json.loads(PHONETIC_FILE.read_text('utf-8'))
+        if isinstance(data, dict):
+            _phon_cache['mtime'] = mtime
+            _phon_cache['data'] = data
+            return data
+    except Exception:
+        pass
+    return {}
+
+def _apply_phonetic(txt: str) -> str:
+    """Thay the ten rieng / tu kho doc bang phien am tu phonetic_dict.json.
+    Key viet hoa (ten rieng): khop chinh xac case.
+    Key viet thuong (tu thuong): khop khong phan biet hoa/thuong.
+    Key bat dau bang '_': bo qua (comment/huong dan)."""
+    d = _load_phonetic_dict()
+    if not d:
+        return txt
+    import re as _re
+    for word, rep in d.items():
+        if not word or word.startswith('_'):
+            continue
+        pat = r'\b' + _re.escape(word) + r'\b'
+        if word[0].isupper():
+            txt = _re.sub(pat, rep, txt)           # case-sensitive
+        else:
+            txt = _re.sub(pat, rep, txt, flags=_re.IGNORECASE)  # case-insensitive
+    return txt
 
 def _edge_smart_pause(txt: str, max_words: int = 8) -> str:
     """
@@ -1531,8 +2076,9 @@ def preprocess_text(txt):
     # 3. ... hoac ellipsis -> dung
     txt = txt.replace("…", "... ")
     txt = _re.sub(r"\.{3,}", "... ", txt)
-    # 4. -- -> ngat
-    txt = _re.sub(r"\s*--\s*", ", ", txt)
+    # 4. -- va emdash -> space (Qwen3 BPE khong co token em-dash)
+    txt = _re.sub(r'\s*--\s*', ' ', txt)
+    txt = _re.sub(u'\s*—\s*', ' ', txt)
     # 5. Van ban trong ngoac kep -> nhan nha
     def _emph(m):
         return ", " + m.group(1).strip() + ","
@@ -1557,8 +2103,409 @@ def preprocess_text(txt):
     return txt.strip()
 
 
+# ══════════ TTS-FRIENDLY: toi uu van ban cho de doc (khong doi tu) ══════
+def _tts_friendly(text: str, split_long_sentences: bool = True) -> str:
+    """
+    Toi uu van ban cho de doc (TTS-friendly) truoc khi tao voice.
+    GIU NGUYEN 100% TU NGU - chi doi dau cau / khoang trang / gach noi /
+    hoa-thuong o dau cau moi. Tuyet doi khong them/bot/doi tu nao.
+
+    Ly do can: giong chay seed co dinh (42) -> cung 1 text luon ra cung 1
+    audio, nen khi voice "vap" o 1 cho, tao lai bao nhieu lan cung vap
+    y cho do - chi sua duoc bang cach doi CAU TRUC VAN BAN, khong sua
+    duoc bang model. 2 nguyen nhan vap pho bien:
+    - Cau qua dai (~60 tu, nhieu dau phay) -> model "khoi dong lai" nhip
+      sau dau phay giua cau, de vap o giua.
+    - Gach noi trong tu ghep (vd "well-dressed") + chum phu am day -> model
+      hay doc giat o cho co dau gach noi.
+
+    A. Bo gach noi trong tu ghep, doi gach dai (em/en dash) dung ngat y
+       thanh dau phay nghi mem.
+    B. Tach cau qua dai (>28 tu) CHI tai ranh gioi manh: dau phay + lien tu
+       noi menh de doc lap (", and " ", but " ", so " ", yet " ", and the ").
+       Toi da 2 lan tach/cau, khong tao manh < 4 tu, uu tien tach gan giua
+       cau nhat. Neu khong co ranh gioi an toan -> de nguyen, khong tach bua.
+       CHI danh cho MagicVoice (model co van de vap cau dai vi seed co
+       dinh) - KHONG danh cho Edge TTS (xem split_long_sentences).
+    C. Chuan hoa khoang trang/dau cau: dung 1 khoang trang sau dau cau, gop
+       khoang trang thua, dam bao cau ket bang dau ket cau.
+
+    split_long_sentences: FIX v3.66 - Edge TTS (Microsoft) khong bi "vap"
+    cau dai nhu MagicVoice (khong dung seed co dinh), nhung lai tu nghi
+    lau hon o MOI dau cham theo prosody rieng cua no. Truoc day ham nay
+    luon chen them dau cham khi tach cau dai (rule B) bat ke dang dung
+    Edge hay MagicVoice - voi Edge, dieu nay CONG DON qua nhieu doan nghi
+    dai khong can thiet (van ban von dung dau phay la du, khong vap).
+    Goi voi split_long_sentences=False cho Edge TTS de chi ap dung A+C
+    (an toan, co loi cho ca 2 chieu), bo qua B.
+    """
+    import re as _re
+
+    # FIX: giu nguyen ranh gioi DOAN VAN ("\n\n") - tab Van Ban dung dung
+    # dau nay de tao khoang nghi 500ms giua doan (_run_text split theo
+    # "\n\n"). Ban dau ham nay tach cau qua \s+ (khop ca \n\n) roi noi lai
+    # bang ' '.join(...), lam MAT HAN "\n\n" giua cac doan - phat hien qua
+    # test truoc khi build, xu ly TUNG DOAN rieng roi ghep lai dung "\n\n".
+    _paragraphs = text.split('\n\n')
+    _out_paragraphs = []
+    for _para in _paragraphs:
+        _out_paragraphs.append(_tts_friendly_one_paragraph(_para, split_long_sentences))
+    return '\n\n'.join(_out_paragraphs)
+
+
+def _tts_friendly_one_paragraph(text: str, split_long_sentences: bool = True) -> str:
+    """Xu ly TTS-friendly cho 1 doan van don le (khong chua \\n\\n)."""
+    import re as _re
+
+    # ── A. Bo gach noi trong tu ghep + gach dai dung ngat y ──────────
+    text = _re.sub(r'(?<=[A-Za-zÀ-ỹ])-(?=[A-Za-zÀ-ỹ])', ' ', text)
+    text = _re.sub(r'\s*[—–]\s*', ', ', text)
+
+    if not split_long_sentences:
+        return _tts_friendly_cleanup_spacing(text)
+
+    # ── B. Tach cau qua dai o ranh gioi lien tu an toan ──────────────
+    _CONN_RE = _re.compile(r', (and the|and|but|so|yet) ')
+
+    def _split_one(sent):
+        if len(sent.split()) <= 28:
+            return None
+        matches = list(_CONN_RE.finditer(sent))
+        if not matches:
+            return None
+        mid = len(sent) / 2
+        valid = [m for m in matches
+                 if len(sent[:m.start()].split()) >= 4
+                 and len(sent[m.end():].split()) >= 4]
+        if not valid:
+            return None
+        m = min(valid, key=lambda mm: abs((mm.start() + mm.end()) / 2 - mid))
+        left = sent[:m.start()].rstrip()
+        if left and left[-1] not in '.!?':
+            left += '.'
+        conn = m.group(1)
+        conn_cap = conn[0].upper() + conn[1:]
+        right = conn_cap + ' ' + sent[m.end():].lstrip()
+        return left, right
+
+    sentences = _re.split(r'(?<=[.!?])\s+', text)
+    out_sentences = []
+    for sent in sentences:
+        pieces = [sent]
+        splits_done = 0
+        i = 0
+        while i < len(pieces) and splits_done < 2:
+            r = _split_one(pieces[i])
+            if r:
+                pieces[i:i + 1] = [r[0], r[1]]
+                splits_done += 1
+                i += 2
+            else:
+                i += 1
+        out_sentences.extend(pieces)
+    text = ' '.join(out_sentences)
+
+    return _tts_friendly_cleanup_spacing(text)
+
+
+def _tts_friendly_cleanup_spacing(text: str) -> str:
+    """Buoc C: chuan hoa khoang trang / dau cau - dung chung cho ca 2 nhanh
+    (co/khong tach cau dai). Chi chen khoang trang khi dau cau theo sau boi
+    CHU/SO (khong phai dau cau khac) - tranh pha hong chuoi dau lien tiep
+    nhu "..." (ellipsis) thanh ". . ." (FIX: phat hien qua test voi fragment
+    co "...")."""
+    import re as _re
+    text = _re.sub(r'([.,;:!?])(?=[A-Za-zÀ-ỹ0-9])', r'\1 ', text)
+    text = _re.sub(r'[ \t]{2,}', ' ', text)
+    text = text.strip()
+    if text and text[-1] not in '.!?':
+        text += '.'
+    return text
+
+
+# ══════════ TTS QUALITY VERIFICATION (Whisper verify + retry) ════════
+_wv_pipe_cache = {}   # {'model': WhisperModel} — load mot lan, dung mai
+
+def _wv_load_pipe():
+    """Tra ve faster-whisper WhisperModel (CPU, nho, "small") de verify phat am.
+    FIX v3.66 (bat lai Whisper-verify): TRUOC DAY ham nay tim cache theo ten
+    "openai/whisper-*" qua transformers.pipeline - nhung tu v3.66,
+    setup_helper.py KHONG con tai san Whisper (buoc nay da bi bo so voi
+    v3.58), va tinh nang Clone Voice (_auto_transcribe_ref) dung faster-whisper
+    (dinh dang cache HOAN TOAN KHAC "openai/whisper-*") - nen truoc day neu bat
+    lai verify, ham nay se GAN NHU LUON tra ve None (khong tim thay cache nao
+    ca) → verify coi nhu van tat du da go return som. Gio DOI SANG dung CHUNG
+    faster-whisper voi Clone Voice: tu cai neu chua co (giong het pattern da
+    dung o _auto_transcribe_ref), model "small" (~244MB, tai 1 lan, dung
+    chung cho ca Clone Voice lan verify nay neu Clone Voice cung dung "small").
+    Tra ve None neu khong cai/tai duoc (vd may khong co mang lan dau)."""
+    if 'model' in _wv_pipe_cache:
+        return _wv_pipe_cache['model']
+    try:
+        try:
+            from faster_whisper import WhisperModel as _WM_v
+        except ImportError:
+            import subprocess as _sp_wv, sys as _sys_wv
+            _flags_wv = 0x08000000 if os.name == "nt" else 0
+            _sp_wv.run([_sys_wv.executable, "-m", "pip", "install",
+                       "faster-whisper", "--quiet", "--no-cache-dir"],
+                      creationflags=_flags_wv, timeout=180)
+            from faster_whisper import WhisperModel as _WM_v
+        _m = _WM_v("small", device="cpu", compute_type="int8")
+        _wv_pipe_cache['model'] = _m
+        return _m
+    except Exception:
+        pass
+    _wv_pipe_cache['model'] = None
+    return None
+
+
+def _wv_score(expected: str, transcribed: str) -> float:
+    """Tinh ty le tu noi dung (>= 3 ky tu) trong expected xuat hien trong transcribed."""
+    import re as _re
+    def _words(t):
+        t = t.lower()
+        t = _re.sub(r"[^a-z0-9'\s]", " ", t)
+        return set(w for w in t.split() if len(w) >= 3)
+    exp = _words(expected)
+    tra = _words(transcribed)
+    if not exp:
+        return 1.0
+    return len(exp & tra) / len(exp)
+
+
+def _wv_transcribe(pipe, tensor):
+    """Transcribe mot tensor audio (1, T) @ 24kHz bang faster-whisper. Tra ve chuoi.
+    Dung numpy array truc tiep (khong ghi file tam) de tranh subprocess flash.
+    FIX v3.66: faster-whisper (giong nhu Whisper goc) can audio 16kHz, khac
+    24kHz cua OmniVoice - phai resample truoc khi transcribe, neu khong
+    ket qua se sai/rong (Whisper doc nham toc do audio)."""
+    try:
+        import numpy as _np_wv
+        import torchaudio as _ta_wv
+        t16 = _ta_wv.functional.resample(tensor, 24000, 16000)
+        arr = t16.squeeze().cpu().numpy().astype(_np_wv.float32)
+        segments, _info_wv = pipe.transcribe(arr, beam_size=1, vad_filter=True)
+        return " ".join(s.text.strip() for s in segments).strip()
+    except Exception:
+        return ''
+
+
+def _gen_cached(text: str, steps: int, speed: float, kw: dict):
+    """FIX v3.66 (hieu nang 2026-07-24): dispatcher dung chung - neu kw co
+    "ref_audio" (Clone Voice), dung voice_clone_prompt DA CACHE (tinh 1 lan
+    cho ca phien, khong phien am/ma hoa lai audio mau moi chunk). Neu khong
+    phai clone (Design/khong co ref_audio), goi Backend.gen() y nguyen nhu
+    truoc - KHONG doi hanh vi Design mode. Day la ham RIENG, KHONG dung
+    hay sua Backend.gen()."""
+    ref_audio = kw.get("ref_audio")
+    if ref_audio:
+        vcp = Backend.get_voice_clone_prompt(ref_audio, kw.get("ref_text"))
+        return Backend.gen_with_clone_prompt(text, vcp, num_step=steps, speed=speed)
+    return Backend.gen(text, num_step=steps, speed=speed, **kw)
+
+
+def _gen_verified(text: str, steps: int, speed: float, kw: dict,
+                  log_fn=None, max_retry: int = 2):
+    """
+    Goi Backend.gen() va kiem tra phat am bang Whisper.
+    - Lan 1 gen voi seed mac dinh (42)
+    - Neu score < 78% hoac transcription qua ngan → retry voi seed khac (toi da max_retry lan)
+    - Tra ve tensor co score cao nhat
+    Returns: (audio_tensor, is_ok: bool, transcribed: str)
+    """
+    _THRESHOLD = 0.78
+    _RETRY_SEEDS = [43, 44, 45]
+
+    def _do_gen(seed_override=None):
+        _orig = Backend._seed
+        if seed_override is not None:
+            Backend._seed = seed_override
+        try:
+            return _gen_cached(text, steps, speed, kw)
+        finally:
+            Backend._seed = _orig
+
+    # --- Attempt 0 ---
+    a0 = _do_gen()
+    t0 = _to_tensor(a0)
+    # FIX v3.66 (tat lai 2026-07-24, theo lenh truc tiep anh Bac): sang nay
+    # da bat lai co che nay (sua _wv_load_pipe/_wv_transcribe sang faster-
+    # whisper de verify hoat dong that su) - nhung ngay sau do anh Bac bao
+    # chat luong Clone Voice XAU HAN RO RET (lap tu/meo tieng nhieu hon han)
+    # so voi ban truoc khi bat verify. Nghi van chinh: retry-doi-seed (43/
+    # 44/45) khi verify (co the SAI, Whisper nghe nham) cham diem duoi 78% -
+    # seed=42 la seed rieng da duoc chon on dinh nhat cho Clone Voice, doi
+    # seed khac de "qua verify" co the ra giong KEM KHOP voi audio mau hon,
+    # du diem Whisper-match cao hon. Theo LENH TRUC TIEP anh Bac (2026-07-24,
+    # "Tat han Whisper-verify — ve dung trang thai truoc sang nay"): TAT LAI
+    # HOAN TOAN, khong con ban gan-dead-code nhu lan tat truoc (lan do van
+    # con nham "khong tim thay pipe" dead code o duoi) - return thang o day,
+    # KHONG goi _wv_load_pipe/_wv_transcribe nua, dam bao MOI chunk deu chi
+    # dung dung 1 lan seed=42, khong bao gio retry doi seed.
+    #
+    # FIX v3.66 (dò lặp cụm 2026-07-25): da thu them 1 lop "dò lap n-gram +
+    # tao lai giu nguyen seed=42" nhung anh Bac chi ra dung logic sai: seed=42
+    # da duoc chung minh TAT DINH (5/5, 8/8 lan giong het nhau tung chu qua
+    # nhieu test that) - neu vay tao lai VOI CUNG SEED chi ra lai DUNG BAN
+    # LAP HET, khong sua duoc gi (ban chat la Whisper-verify-retry trá hình).
+    # DA GO BO co che do. KHONG duoc bat lai kieu "tao lai giu seed" nay tru
+    # khi co bang chung ro rang co yeu to thuc su thay doi giua 2 lan tao.
+    return t0, True, ''
+
+    tr0 = _wv_transcribe(pipe, t0)
+    sc0 = _wv_score(text, tr0)
+    # Kiem tra word ratio: neu Whisper nghe duoc < 50% so tu → ep score xuong de force retry
+    _w_in  = len(text.split())
+    _w_out = len(tr0.split())
+    if _w_in >= 5 and _w_out < _w_in * 0.5:
+        sc0 = min(sc0, 0.45)
+
+    if sc0 >= _THRESHOLD:
+        if log_fn:
+            log_fn(f"    🎯 verify {sc0:.0%}: {tr0[:70]}", "info")
+        return t0, True, tr0
+
+    if log_fn:
+        log_fn(f"    ⚠ phat am {sc0:.0%} < {_THRESHOLD:.0%} → retry\n"
+               f"      input : {text[:70]}\n"
+               f"      heard : {tr0[:70]}", "warn")
+
+    # --- Retry voi seed khac ---
+    best_t, best_sc, best_tr = t0, sc0, tr0
+    for ri in range(min(max_retry, len(_RETRY_SEEDS))):
+        ar = _do_gen(seed_override=_RETRY_SEEDS[ri])
+        tr = _to_tensor(ar)
+        trr = _wv_transcribe(pipe, tr)
+        scr = _wv_score(text, trr)
+        if log_fn:
+            log_fn(f"    retry {ri+1}/seed={_RETRY_SEEDS[ri]}: {scr:.0%} | {trr[:60]}", "info")
+        if scr > best_sc:
+            best_t, best_sc, best_tr = tr, scr, trr
+        if best_sc >= _THRESHOLD:
+            break
+
+    ok = best_sc >= _THRESHOLD
+    if log_fn:
+        if ok:
+            log_fn(f"    ✅ verify {best_sc:.0%}: {best_tr[:70]}", "info")
+        else:
+            log_fn(f"    ⚠ chap nhan {best_sc:.0%} (da thu {min(max_retry, len(_RETRY_SEEDS))+1} lan): {best_tr[:70]}", "warn")
+    return best_t, ok, best_tr
+
+
+def _smart_chunks(txt: str, sr: int = 24000, max_ch: int = 350):
+    """
+    Chia text thanh chunks theo ranh gioi cau (.!?) — chi vay thoi.
+
+    Nguyen tac don gian:
+      - Chi split tai .!? (cau hoan chinh) — de OmniVoice tu xu ly nhip nghi ,; noi bo
+      - Gom cac cau ngan lai cho den max_ch (duoi nguong 375 noi bo cua OmniVoice)
+      - Cau don le > max_ch: giu nguyen 1 chunk, OmniVoice tu xu ly
+      - KHONG bao gio split tai phay/cham phay
+
+    Returns: list of (text: str, pause_ms: int)
+      pause_ms = 350ms giua cac nhom cau, 0 cho chunk cuoi
+    """
+    import re as _re
+    if not txt or not txt.strip():
+        return []
+    txt = txt.strip()
+    if len(txt) <= max_ch:
+        return [(txt, 0)]
+
+    sents = [s.strip() for s in _re.split(r'(?<=[.!?])\s+', txt) if s.strip()]
+
+    result = []
+    buf = ''
+    for s in sents:
+        if not buf:
+            buf = s
+        elif len(buf) + 1 + len(s) <= max_ch:
+            buf += ' ' + s
+        else:
+            result.append((buf, 350))
+            buf = s
+    if buf:
+        result.append((buf, 0))
+
+    return result if result else [(txt, 0)]
+
+
 # ══════════════════════════ EDGE TTS VOICES (module-level) ═══════════
 # Phai dat o module-level de moi noi (build_left, build_sidebar) deu dung duoc
+# FIX v3.68 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): danh sach
+# giong "MG Nhanh" - hien thi TEN NOI BO, KHONG duoc de lo ten
+# thu vien/model goc o bat ky dau (xem NOTES_kokoro_feature.md). Gom
+# tieng Anh (My/Anh) + Tay Ban Nha/Phap/Hindi/Y/Bo Dao Nha - TAT CA da
+# test THAT tung giong, chay duoc chi voi "pip install kokoro" (khong
+# can thu vien phu). Nhat (pyopenjtalk) va Trung (pypinyin) CHUA them vi
+# can cai them thu vien rieng, chua verify on dinh tren may khach.
+FAST_VOICES_LIST = [
+    # ── 🇺🇸 Nu My ──
+    ("af_heart",  "🇺🇸 Heart - Nữ Mỹ (mặc định, tự nhiên)"),
+    ("af_bella",  "🇺🇸 Bella - Nữ Mỹ"),
+    ("af_nicole", "🇺🇸 Nicole - Nữ Mỹ"),
+    ("af_sarah",  "🇺🇸 Sarah - Nữ Mỹ"),
+    ("af_sky",    "🇺🇸 Sky - Nữ Mỹ"),
+    ("af_nova",   "🇺🇸 Nova - Nữ Mỹ"),
+    ("af_river",  "🇺🇸 River - Nữ Mỹ"),
+    ("af_jessica","🇺🇸 Jessica - Nữ Mỹ"),
+    ("af_kore",   "🇺🇸 Kore - Nữ Mỹ"),
+    ("af_alloy",  "🇺🇸 Alloy - Nữ Mỹ"),
+    ("af_aoede",  "🇺🇸 Aoede - Nữ Mỹ"),
+    # ── 🇺🇸 Nam My ──
+    ("am_michael","🇺🇸 Michael - Nam Mỹ"),
+    ("am_adam",   "🇺🇸 Adam - Nam Mỹ"),
+    ("am_echo",   "🇺🇸 Echo - Nam Mỹ"),
+    ("am_eric",   "🇺🇸 Eric - Nam Mỹ"),
+    ("am_fenrir", "🇺🇸 Fenrir - Nam Mỹ"),
+    ("am_liam",   "🇺🇸 Liam - Nam Mỹ"),
+    ("am_onyx",   "🇺🇸 Onyx - Nam Mỹ"),
+    ("am_puck",   "🇺🇸 Puck - Nam Mỹ"),
+    ("am_santa",  "🇺🇸 Santa - Nam Mỹ"),
+    # ── 🇬🇧 Nu Anh ──
+    ("bf_emma",     "🇬🇧 Emma - Nữ Anh"),
+    ("bf_isabella", "🇬🇧 Isabella - Nữ Anh"),
+    ("bf_alice",    "🇬🇧 Alice - Nữ Anh"),
+    ("bf_lily",     "🇬🇧 Lily - Nữ Anh"),
+    # ── 🇬🇧 Nam Anh ──
+    ("bm_george", "🇬🇧 George - Nam Anh"),
+    ("bm_daniel", "🇬🇧 Daniel - Nam Anh"),
+    ("bm_lewis",  "🇬🇧 Lewis - Nam Anh"),
+    ("bm_fable",  "🇬🇧 Fable - Nam Anh"),
+    # FIX v3.68 (bo sung 2026-07-25, da test THAT tung giong - chi them
+    # ngon ngu KHONG can thu vien phu, tranh loi cai dat cho khach). Nhat
+    # (pyopenjtalk) va Trung (pypinyin) CHUA them vi can cai them thu vien
+    # rieng, chua verify on dinh tren may khach.
+    # ── 🇪🇸 Tay Ban Nha ──
+    ("ef_dora",  "🇪🇸 Dora - Nữ Tây Ban Nha"),
+    ("em_alex",  "🇪🇸 Alex - Nam Tây Ban Nha"),
+    ("em_santa", "🇪🇸 Santa - Nam Tây Ban Nha"),
+    # ── 🇫🇷 Phap ──
+    ("ff_siwis", "🇫🇷 Siwis - Nữ Pháp"),
+    # ── 🇮🇳 Hindi (An Do) ──
+    ("hf_alpha", "🇮🇳 Alpha - Nữ Hindi"),
+    ("hf_beta",  "🇮🇳 Beta - Nữ Hindi"),
+    ("hm_omega", "🇮🇳 Omega - Nam Hindi"),
+    ("hm_psi",   "🇮🇳 Psi - Nam Hindi"),
+    # ── 🇮🇹 Y ──
+    ("if_sara",   "🇮🇹 Sara - Nữ Ý"),
+    ("im_nicola", "🇮🇹 Nicola - Nam Ý"),
+    # ── 🇵🇹 Bo Dao Nha (Brazil) ──
+    ("pf_dora",  "🇵🇹 Dora - Nữ Bồ Đào Nha"),
+    ("pm_alex",  "🇵🇹 Alex - Nam Bồ Đào Nha"),
+    ("pm_santa", "🇵🇹 Santa - Nam Bồ Đào Nha"),
+]
+
+def _fast_lang_code(voice_id: str) -> str:
+    """FIX v3.68: lay lang_code cho KPipeline tu ky tu dau tien cua voice_id
+    (dung quy uoc chinh thuc cua thu vien: a=My, b=Anh, e=TBN, f=Phap,
+    h=Hindi, i=Y, p=BDN - chi gom cac ngon ngu da verify khong can thu
+    vien phu, xem FAST_VOICES_LIST)."""
+    return voice_id[0] if voice_id and voice_id[0] in "abefhip" else "a"
+
+
 EDGE_VOICES_LIST = [
     # ── 🇺🇸 Tieng Anh My ──
     ("en-US-AriaNeural",        "🇺🇸 Aria - Nữ Mỹ (tự nhiên, trẻ trung)"),
@@ -1572,10 +2519,9 @@ EDGE_VOICES_LIST = [
     ("en-US-EricNeural",        "🇺🇸 Eric - Nam Mỹ (trung tính, rõ)"),
     ("en-US-RogerNeural",       "🇺🇸 Roger - Nam Mỹ (lớn tuổi)"),
     ("en-US-SteffanNeural",     "🇺🇸 Steffan - Nam Mỹ (kể chuyện)"),
-    ("en-US-BrianNeural",       "🇺🇸 Brian - Nam Mỹ (nghiêm túc)"),
-    ("en-US-DavisNeural",       "🇺🇸 Davis - Nam Mỹ (truyền cảm)"),
-    ("en-US-JasonNeural",       "🇺🇸 Jason - Nam Mỹ (trẻ trung)"),
-    ("en-US-TonyNeural",        "🇺🇸 Tony - Nam Mỹ (sôi nổi)"),
+    ("en-US-BrianNeural",       "🇺🇸 Brian - Nam Mỹ (gần gũi, chân thành)"),
+    # FIX v3.65: xoa Davis/Jason/Tony - Microsoft da khai tu, chon vao se loi
+    # khong tao duoc audio (doi chieu voi `edge-tts --list-voices` that su).
     # ── 🇬🇧 Tieng Anh Anh ──
     ("en-GB-SoniaNeural",       "🇬🇧 Sonia - Nữ Anh (chuẩn, thanh lịch)"),
     ("en-GB-LibbyNeural",       "🇬🇧 Libby - Nữ Anh (trẻ, hiện đại)"),
@@ -1584,7 +2530,9 @@ EDGE_VOICES_LIST = [
     ("en-GB-ThomasNeural",      "🇬🇧 Thomas - Nam Anh (trang trọng)"),
     # ── 🇦🇺 Tieng Anh Uc ──
     ("en-AU-NatashaNeural",     "🇦🇺 Natasha - Nữ Úc (tự nhiên)"),
-    ("en-AU-WilliamNeural",     "🇦🇺 William - Nam Úc (trầm ấm)"),
+    # FIX v3.65: en-AU-WilliamNeural (ban thuong) da bi Microsoft khai tu,
+    # thay bang ban Multilingual con ton tai that.
+    ("en-AU-WilliamMultilingualNeural", "🇦🇺 William - Nam Úc (trầm ấm, đa ngôn ngữ)"),
     # ── 🇨🇦 Tieng Anh Canada ──
     ("en-CA-ClaraNeural",       "🇨🇦 Clara - Nữ Canada"),
     ("en-CA-LiamNeural",        "🇨🇦 Liam - Nam Canada"),
@@ -1603,7 +2551,7 @@ EDGE_VOICES_LIST = [
     ("zh-CN-YunjianNeural",     "🇨🇳 Yunjian - Nam Trung (kể chuyện)"),
     ("zh-CN-YunxiNeural",       "🇨🇳 Yunxi - Nam Trung (trẻ)"),
     ("zh-CN-YunyangNeural",     "🇨🇳 Yunyang - Nam Trung (phổ thông, rõ)"),
-    ("zh-CN-XiaochenNeural",    "🇨🇳 Xiaochen - Nữ Trung (chậm)"),
+    # FIX v3.65: zh-CN-XiaochenNeural da bi Microsoft khai tu, xoa.
     ("zh-HK-HiuMaanNeural",     "🇭🇰 HiuMaan - Nữ Hong Kong"),
     ("zh-TW-HsiaoChenNeural",   "🇹🇼 HsiaoChen - Nữ Đài Loan"),
     # ── 🇯🇵 Tieng Nhat ──
@@ -1676,12 +2624,46 @@ VOICE_PRESETS = {
         ("Female Australian",      "female, young adult, australian accent"),
         ("Male Australian",        "male, young adult, australian accent"),
         ("Female Canadian",        "female, young adult, canadian accent"),
+        ("Male Canadian",          "male, young adult, canadian accent"),
         ("Female Indian",          "female, young adult, indian accent"),
         ("Male Indian",            "male, young adult, indian accent"),
-        ("Female Korean",          "female, young adult, korean accent"),
-        ("Female Japanese",        "female, young adult, japanese accent"),
-        ("Male Russian",           "male, middle-aged, russian accent"),
-        ("Female Portuguese",      "female, young adult, portuguese accent"),
+    ],
+    # FIX v3.65 (2): RUT GON lai chi con dung 10 accent model THAT SU ho tro -
+    # xac nhan qua thong bao loi that khi anh Bac bam Nghe Thu:
+    #   "Valid English items: american accent, australian accent,
+    #    british accent, canadian accent, chinese accent, indian accent,
+    #    japanese accent, korean accent, portuguese accent, russian accent"
+    # Truoc do em da THEM NHAM 13 accent khong ton tai trong model (thai,
+    # filipino, indonesian, malaysian, french, german, italian, spanish,
+    # mexican, brazilian, dutch, turkish, arabic, irish, south african) ->
+    # chon vao se bi loi "Unsupported instruct items". Day la bai hoc: Voice
+    # Design KHONG phai instruct tu do hoan toan, ma la 1 tap gia tri CO DINH
+    # (closed vocabulary) model da duoc huan luyen - khac voi Edge TTS (that
+    # su la danh sach giong theo tung quoc gia/ngon ngu that).
+    # => Neu anh can giong THAT SU noi ngon ngu cua nuoc do (Phap, Duc, Y,
+    # TBN, Thai, Indo...) thi dung Edge TTS (da co du ~80 giong that/20 nuoc,
+    # xac thuc qua API that) - Voice Design chi la giong TIENG ANH voi 10 sac
+    # thai accent nghe-nhu-nguoi-nuoc-ngoai noi tieng Anh, khong sinh duoc
+    # tieng noi that cua ngon ngu do.
+    "🇨🇳 English — Chinese Accent": [
+        ("Female Chinese", "female, young adult, chinese accent"),
+        ("Male Chinese",   "male, young adult, chinese accent"),
+    ],
+    "🇰🇷 English — Korean Accent": [
+        ("Female Korean", "female, young adult, korean accent"),
+        ("Male Korean",   "male, young adult, korean accent"),
+    ],
+    "🇯🇵 English — Japanese Accent": [
+        ("Female Japanese", "female, young adult, japanese accent"),
+        ("Male Japanese",   "male, young adult, japanese accent"),
+    ],
+    "🇵🇹 English — Portuguese Accent": [
+        ("Female Portuguese", "female, young adult, portuguese accent"),
+        ("Male Portuguese",   "male, young adult, portuguese accent"),
+    ],
+    "🇷🇺 English — Russian Accent": [
+        ("Female Russian", "female, young adult, russian accent"),
+        ("Male Russian",   "male, middle-aged, russian accent"),
     ],
 
     "🎭 Đặc Biệt": [
@@ -1715,7 +2697,9 @@ class VoiceBrowserDialog(tk.Toplevel):
         hdr.pack(fill="x")
         tk.Label(hdr, text="🎙  Voice Browser — Thư Viện Giọng MagicVoice",
                  font=(FN, 13, "bold"), bg=P["purple"], fg="white").pack(side="left", padx=20)
-        tk.Label(hdr, text="Voice Design: kết hợp thuộc tính để tạo giọng",
+        # FIX v3.65 (7): bo hoan toan danh muc Voice Design theo yeu cau -
+        # dialog nay gio chi con "Giong That" (Edge TTS, du quoc gia that).
+        tk.Label(hdr, text="Giọng thật — chọn đúng quốc gia, nghe đúng ngôn ngữ",
                  font=(FN, 9), bg=P["purple"], fg="#ddd").pack(side="right", padx=20)
 
         # Body: left categories + right presets
@@ -1729,15 +2713,57 @@ class VoiceBrowserDialog(tk.Toplevel):
         tk.Label(cat_frame, text="Danh mục", font=(FN, 9, "bold"),
                  bg=P["sidebar"], fg=P["label"], pady=8).pack(fill="x", padx=8)
 
+        # FIX v3.65: them Canvas + Scrollbar cho danh sach danh muc - truoc day
+        # cac nut duoc pack() THANG vao cat_frame (chieu cao co dinh cua dialog),
+        # nen khi tang len 23 danh muc (sau khi tach rieng tung nuoc o fix truoc)
+        # bi tran ra ngoai, khong co con lan de xem cac danh muc phia duoi
+        # (Turkish, Arabic, Dac Biet...). Dung lai dung pattern Canvas+Scrollbar
+        # da co san o middle preset_lb (vsb) cho dong bo.
+        cat_canvas = tk.Canvas(cat_frame, bg=P["white"], highlightthickness=0)
+        cat_vsb = tk.Scrollbar(cat_frame, orient="vertical", command=cat_canvas.yview)
+        cat_canvas.configure(yscrollcommand=cat_vsb.set)
+        cat_vsb.pack(side="right", fill="y")
+        cat_canvas.pack(side="left", fill="both", expand=True)
+
+        cat_inner = tk.Frame(cat_canvas, bg=P["white"])
+        cat_win = cat_canvas.create_window((0, 0), window=cat_inner, anchor="nw")
+
+        def _cat_inner_configure(event):
+            cat_canvas.configure(scrollregion=cat_canvas.bbox("all"))
+        cat_inner.bind("<Configure>", _cat_inner_configure)
+
+        def _cat_canvas_configure(event):
+            cat_canvas.itemconfig(cat_win, width=event.width)
+        cat_canvas.bind("<Configure>", _cat_canvas_configure)
+
+        # Cuon bang chuot khi tro dang o vung danh muc (khong anh huong vung khac)
+        def _cat_mousewheel(event):
+            cat_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        cat_canvas.bind("<Enter>", lambda e: cat_canvas.bind_all("<MouseWheel>", _cat_mousewheel))
+        cat_canvas.bind("<Leave>", lambda e: cat_canvas.unbind_all("<MouseWheel>"))
+
+        # FIX v3.65 (7): BO HAN danh muc Voice Design theo yeu cau anh Bac
+        # (gay hieu nham lien tuc vi khong tao duoc tieng noi that) - dialog
+        # nay gio CHI con danh muc Giong That (Edge TTS, tu self.master._edge_full
+        # - da co san ~80 giong/20 nuoc, xac thuc that qua API). Van giu lai
+        # VOICE_PRESETS + _design_frame trong code (khong xoa) phong khi can
+        # dung lai sau nay, nhung KHONG con hien nut danh muc nao cho no nua.
         self.cat_btns = {}
         self.current_cat = tk.StringVar()
-        for cat in VOICE_PRESETS:
-            b = tk.Button(cat_frame, text=cat, font=(FN, 9),
-                          bg=P["white"], fg=P["label"], relief="flat",
-                          cursor="hand2", anchor="w", padx=12, pady=6,
-                          command=lambda c=cat: self._show_cat(c))
-            b.pack(fill="x")
-            self.cat_btns[cat] = b
+        self._edge_cats = set()
+        if hasattr(self.master, "_edge_full") and self.master._edge_full:
+            tk.Label(cat_inner, text="🌐 Giọng Thật (Đầy Đủ Quốc Gia)",
+                     font=(FN, 8, "bold"), bg=P["sidebar"], fg=P["label"],
+                     pady=4).pack(fill="x")
+            for cat in self.master._edge_full:
+                self._edge_cats.add(cat)
+                b = tk.Button(cat_inner, text=cat, font=(FN, 9),
+                              bg=P["white"], fg=P["label"], relief="flat",
+                              cursor="hand2", anchor="w", padx=12, pady=6,
+                              command=lambda c=cat: self._show_cat(c))
+                b.pack(fill="x")
+                self.cat_btns[cat] = b
+        self._is_edge_cat = False
 
         # MIDDLE: preset list
         mid = tk.Frame(body, bg=P["bg"])
@@ -1768,7 +2794,12 @@ class VoiceBrowserDialog(tk.Toplevel):
         right.pack(side="right", fill="y", padx=0)
         right.pack_propagate(False)
 
-        tk.Label(right, text="🔧 Tự Tùy Chỉnh",
+        # FIX v3.65 (5): tach thanh 2 khung rieng - _design_frame (Voice
+        # Design, giu nguyen nhu cu) va _edge_ctrl_frame (Edge TTS, MOI) -
+        # _show_cat() se dong/mo dung 1 trong 2 tuy theo danh muc dang chon.
+        self._design_frame = tk.Frame(right, bg=P["white"])
+
+        tk.Label(self._design_frame, text="🔧 Tự Tùy Chỉnh",
                  font=(FN, 10, "bold"), bg=P["sidebar"],
                  fg=P["purple"], pady=8).pack(fill="x", padx=8)
 
@@ -1780,73 +2811,198 @@ class VoiceBrowserDialog(tk.Toplevel):
             ("Cao độ",     "pitch",  ["(auto)", "very low pitch", "low pitch",
                                        "moderate pitch", "high pitch", "very high pitch"]),
             ("Phong cách", "style",  ["(auto)", "whisper"]),
+            # FIX v3.65 (2): CHI giu dung 10 accent model THAT SU ho tro - xac
+            # nhan qua thong bao loi that ("Valid English items: ..."). Da bo
+            # het cac accent bia/khong ton tai (irish, south african, thai,
+            # filipino, indonesian, malaysian, french, german, italian,
+            # spanish, mexican, brazilian, dutch, turkish, arabic) - chon vao
+            # se bi loi "Unsupported instruct items".
             ("Accent EN",  "accent", ["(auto)", "american accent", "british accent",
                                        "australian accent", "canadian accent",
-                                       "indian accent", "korean accent",
-                                       "japanese accent", "russian accent",
-                                       "portuguese accent"]),
+                                       "indian accent", "chinese accent",
+                                       "korean accent", "japanese accent",
+                                       "portuguese accent", "russian accent"]),
 
         ]
         for label, key, options in attrs:
-            tk.Label(right, text=label+":", font=(FN, 8),
+            tk.Label(self._design_frame, text=label+":", font=(FN, 8),
                      bg=P["white"], fg=P["label"]).pack(anchor="w", padx=12, pady=(4,0))
             var = tk.StringVar(value=options[0])
             self._attr_vars[key] = var
-            cb = ttk.Combobox(right, textvariable=var, values=options,
+            cb = ttk.Combobox(self._design_frame, textvariable=var, values=options,
                               state="readonly", width=22, font=(FN, 8))
             cb.pack(padx=12, pady=(0,2), fill="x")
             cb.bind("<<ComboboxSelected>>", self._update_preview)
 
-        tk.Frame(right, bg=P["border"], height=1).pack(fill="x", padx=8, pady=6)
-        tk.Label(right, text="Instruct string:", font=(FN, 8, "bold"),
+        tk.Frame(self._design_frame, bg=P["border"], height=1).pack(fill="x", padx=8, pady=6)
+        tk.Label(self._design_frame, text="Instruct string:", font=(FN, 8, "bold"),
                  bg=P["white"], fg=P["label"]).pack(anchor="w", padx=12)
         self.preview_var = tk.StringVar(value="")
-        preview_en = tk.Entry(right, textvariable=self.preview_var,
+        preview_en = tk.Entry(self._design_frame, textvariable=self.preview_var,
                               font=(FN, 9), bg=P["sidebar"], fg=P["purple"],
                               relief="flat", highlightthickness=1,
                               highlightbackground=P["border"])
         preview_en.pack(padx=12, fill="x", ipady=4, pady=(2,6))
+
+        # FIX v3.65 (5): khung dieu khien Edge TTS - Toc do/Am luong/Cao do,
+        # dung dung pattern (slider 0.5-2.0) nhu panel "Thiet Ke Giong Edge
+        # TTS" o sidebar chinh (_edge_speed_var/_edge_vol_var/_edge_pitch_var)
+        # de dong bo trai nghiem - dat ten bien khac (_eb_...) de khong dung
+        # cham voi bien cung ten cua App chinh.
+        self._edge_ctrl_frame = tk.Frame(right, bg=P["white"])
+        tk.Label(self._edge_ctrl_frame, text="🌐 Tùy Chỉnh Giọng Edge",
+                 font=(FN, 10, "bold"), bg=P["sidebar"],
+                 fg=P["purple"], pady=8).pack(fill="x", padx=8)
+
+        # FIX v3.65 (7): loc Gioi tinh cho danh sach - day la thu DUY NHAT
+        # trong 5 thuoc tinh Voice Design (Gioi tinh/Tuoi/Cao do/Phong cach/
+        # Accent) THAT SU ap dung duoc cho Edge TTS, vi moi giong Edge co san
+        # da co gioi tinh co dinh -> loc list theo gioi tinh la hop ly (giong
+        # dung bo loc "Tat ca/Nu/Nam" da co san o panel sidebar chinh). Cac
+        # thuoc tinh con lai (Tuoi/Accent) KHONG ap dung duoc vi Edge khong
+        # nhan instruct nhu Voice Design - da giai thich va anh Bac xac nhan
+        # chi lam bo loc Gioi tinh nay thoi.
+        gender_row = tk.Frame(self._edge_ctrl_frame, bg=P["white"])
+        gender_row.pack(fill="x", padx=12, pady=(4,2))
+        tk.Label(gender_row, text="Giới tính:", font=(FN,8),
+                 bg=P["white"], fg=P["dim"]).pack(side="left")
+        self._eb_gender_var = tk.StringVar(value="Tất cả")
+        for g in ["Tất cả", "Nữ", "Nam"]:
+            tk.Radiobutton(gender_row, text=g, variable=self._eb_gender_var,
+                           value=g, font=(FN,8), bg=P["white"],
+                           activebackground=P["white"], cursor="hand2",
+                           command=self._refresh_edge_list).pack(side="left", padx=4)
+        tk.Frame(self._edge_ctrl_frame, bg=P["border"], height=1).pack(fill="x", padx=8, pady=(4,2))
+
+        self._eb_speed_var = tk.DoubleVar(value=1.0)
+        self._eb_vol_var   = tk.DoubleVar(value=1.0)
+        self._eb_pitch_var = tk.DoubleVar(value=1.0)
+        for lbl, var in [("🚀 Tốc độ", self._eb_speed_var),
+                          ("🔊 Âm lượng", self._eb_vol_var),
+                          ("🎵 Cao độ", self._eb_pitch_var)]:
+            row = tk.Frame(self._edge_ctrl_frame, bg=P["white"])
+            row.pack(fill="x", padx=12, pady=4)
+            tk.Label(row, text=lbl, font=(FN,8),
+                     bg=P["white"], fg=P["dim"], width=10,
+                     anchor="w").pack(side="left")
+            vlbl = tk.Label(row, text="1.00", font=(FN,8,"bold"),
+                             bg=P["white"], fg=P["purple"], width=4)
+            vlbl.pack(side="right")
+            ttk.Scale(row, from_=0.5, to=2.0, variable=var,
+                      orient="horizontal",
+                      command=lambda v, l=vlbl: l.config(text=f"{float(v):.2f}")
+                      ).pack(side="left", fill="x", expand=True, padx=4)
+        tk.Label(self._edge_ctrl_frame,
+                 text="Đây là giọng THẬT (Edge TTS)\nnói đúng ngôn ngữ đã chọn.",
+                 font=(FN, 8), bg=P["white"], fg=P["dim"], justify="left",
+                 wraplength=200).pack(anchor="w", padx=12, pady=(8,0))
+
+        # FIX v3.65 (7): Voice Design khong con danh muc nao de chon nua,
+        # nen mac dinh hien khung Edge TTS luon (thay vi _design_frame nhu truoc).
+        self._edge_ctrl_frame.pack(fill="both", expand=True)
 
         # Bottom buttons
         tk.Frame(self, bg=P["border"], height=1).pack(fill="x")
         btn_row = tk.Frame(self, bg=P["bg"])
         btn_row.pack(fill="x", padx=16, pady=10)
 
+        # FIX v3.65: nut Nghe Thu - de khach nghe truoc khi bam Dung Giong Nay,
+        # dung chung engine voi nut "Thu Giong" o sidebar chinh (qua
+        # self.master._preview_instruct) nhung khong can luu voice truoc.
+        self.preview_btn = tk.Button(btn_row, text="🔊  Nghe Thử",
+                                      command=self._preview,
+                                      font=(FN, 11, "bold"), bg="#f0fdf4", fg="#16a34a",
+                                      relief="flat", cursor="hand2", padx=20, pady=8,
+                                      highlightthickness=1, highlightbackground="#86efac")
+        self.preview_btn.pack(side="left")
         self.use_btn = tk.Button(btn_row, text="✅  Dùng Giọng Này",
                                   command=self._use,
                                   font=(FN, 11, "bold"), bg=P["purple"], fg="white",
                                   relief="flat", cursor="hand2", padx=20, pady=8,
                                   state="disabled")
-        self.use_btn.pack(side="left")
-        tk.Button(btn_row, text="🔧 Dùng Custom",
+        self.use_btn.pack(side="left", padx=(8, 0))
+        # FIX v3.65 (5): luu reference de an di khi dang o danh muc Edge TTS -
+        # "Dung Custom" chi co y nghia voi Voice Design (tuy chinh instruct
+        # tu do), khong ap dung cho giong Edge that (khong co khai niem instruct).
+        self.use_custom_btn = tk.Button(btn_row, text="🔧 Dùng Custom",
                   command=self._use_custom,
                   font=(FN, 9), bg=P["hover"], fg=P["label"],
-                  relief="flat", cursor="hand2", padx=12, pady=6
-                  ).pack(side="left", padx=(8, 0))
+                  relief="flat", cursor="hand2", padx=12, pady=6)
+        self.use_custom_btn.pack(side="left", padx=(8, 0))
         tk.Button(btn_row, text="Đóng", command=self.destroy,
                   font=(FN, 9), bg=P["bg"], fg=P["sub"],
                   relief="flat", cursor="hand2", padx=12
                   ).pack(side="right")
 
-        # Show first category
-        first_cat = list(VOICE_PRESETS.keys())[0]
-        self._show_cat(first_cat)
+        # FIX v3.65 (7): mac dinh mo danh muc Edge TTS dau tien (Voice Design
+        # khong con nut danh muc nao de mo nua).
+        if self._edge_cats:
+            first_cat = list(self.master._edge_full.keys())[0]
+            self._show_cat(first_cat)
 
     def _show_cat(self, cat):
         for k, b in self.cat_btns.items():
             b.configure(bg=P["sel"] if k == cat else P["white"],
                         fg=P["purple"] if k == cat else P["label"],
                         font=(FN, 9, "bold") if k == cat else (FN, 9))
-        self.preset_lb.delete(0, "end")
-        self._preset_data = VOICE_PRESETS.get(cat, [])
-        for name, instruct in self._preset_data:
-            self.preset_lb.insert("end", f"  {name}")
+        self.current_cat.set(cat)
+        self._edge_sel_code = None
+
+        # FIX v3.65 (5)(7): phan biet danh muc Voice Design (instruct AI,
+        # tieng Anh - hien khong con nut nao de mo) voi danh muc Edge TTS
+        # (giong THAT, dung self.master._edge_full) - moi loai co cau truc
+        # du lieu va khung dieu khien rieng ben phai.
+        if cat in self._edge_cats:
+            self._is_edge_cat = True
+            self._edge_full_list = self.master._edge_full.get(cat, [])
+            self._design_frame.pack_forget()
+            self._edge_ctrl_frame.pack(fill="both", expand=True)
+            self.use_custom_btn.pack_forget()
+            self._refresh_edge_list()
+        else:
+            self._is_edge_cat = False
+            self.preset_lb.delete(0, "end")
+            self._preset_data = VOICE_PRESETS.get(cat, [])
+            for name, instruct in self._preset_data:
+                self.preset_lb.insert("end", f"  {name}")
+            self._edge_ctrl_frame.pack_forget()
+            self._design_frame.pack(fill="both", expand=True)
+            self.use_custom_btn.pack(side="left", padx=(8, 0))
         self.use_btn.config(state="disabled")
+
+    def _refresh_edge_list(self):
+        """FIX v3.65 (7): loc self._edge_full_list theo Gioi tinh dang chon
+        (Tat ca/Nu/Nam) va ve lai preset_lb. self._preset_data luon la danh
+        sach DA LOC dang hien thi (index khop voi preset_lb) de _on_select
+        tra cuu dung."""
+        if not self._is_edge_cat:
+            return
+        self.preset_lb.delete(0, "end")
+        self._edge_sel_code = None
+        self.use_btn.config(state="disabled")
+        gfilter = self._eb_gender_var.get()
+        filtered = self._edge_full_list
+        if gfilter != "Tất cả":
+            filtered = [v for v in filtered if v[2] == gfilter]
+        self._preset_data = filtered
+        for code, name, gender, desc in filtered:
+            icon = "👩" if gender == "Nữ" else "👨"
+            self.preset_lb.insert("end", f"  {icon} {name} — {desc}")
 
     def _on_select(self, event=None):
         sel = self.preset_lb.curselection()
-        if sel:
-            _, instruct = self._preset_data[sel[0]]
+        if not sel:
+            return
+        idx = sel[0]
+        if self._is_edge_cat:
+            code, name, gender, desc = self._preset_data[idx]
+            self._edge_sel_code = code
+            self._edge_sel_name = name
+            self._edge_sel_gender = gender
+            self._edge_sel_desc = desc
+            self.use_btn.config(state="normal")
+        else:
+            _, instruct = self._preset_data[idx]
             self.result_instruct = instruct
             self.preview_var.set(instruct)
             self.use_btn.config(state="normal")
@@ -1859,7 +3015,56 @@ class VoiceBrowserDialog(tk.Toplevel):
                 parts.append(v)
         self.preview_var.set(", ".join(parts) if parts else "")
 
+    def _preview(self):
+        """FIX v3.65: nghe thu giong dang chon/tuy chinh TRUOC khi luu.
+        FIX v3.65 (5): them nhanh Edge TTS - nghe DUNG ngon ngu that cua
+        giong dang chon (khong phai mau tieng Anh nhu Voice Design)."""
+        if self._is_edge_cat:
+            if not self._edge_sel_code:
+                messagebox.showwarning("Chưa chọn",
+                    "Hãy chọn giọng từ danh sách trước!", parent=self)
+                return
+            code = self._edge_sel_code
+            lang = self.master._detect_preview_lang(code)
+            sample = self.master._PREVIEW_SAMPLES.get(lang, self.master._PREVIEW_SAMPLES["en"])
+            self.master._run_voice_preview(sample, f"Edge: {code}",
+                                            btn_ref=self.preview_btn,
+                                            override_edge_code=code)
+            return
+
+        # Dung self.preview_var - da duoc dong bo boi ca _on_select (chon
+        # preset co san) lan _update_preview (tuy chinh thuoc tinh), nen luon
+        # phan anh dung instruct hien tai dang duoc xem.
+        instruct = self.preview_var.get().strip()
+        if not instruct:
+            messagebox.showwarning("Chưa chọn",
+                "Hãy chọn giọng có sẵn hoặc tùy chỉnh thuộc tính trước!", parent=self)
+            return
+        self.master._preview_instruct(instruct, f"Preview: {instruct[:50]}",
+                                       btn_ref=self.preview_btn)
+
     def _use(self):
+        # FIX v3.65 (5): danh muc Edge TTS - tra ve dict (khac voi string
+        # instruct cua Voice Design) de _browse_voices() ben App phan biet
+        # duoc va luu VoiceProfile mode="edge" thay vi mode="design".
+        if self._is_edge_cat:
+            if not self._edge_sel_code:
+                messagebox.showwarning("Chưa chọn", "Hãy chọn giọng trước!", parent=self)
+                return
+            if self.on_select:
+                self.on_select({
+                    "mode": "edge",
+                    "code": self._edge_sel_code,
+                    "name": self._edge_sel_name,
+                    "gender": self._edge_sel_gender,
+                    "desc": self._edge_sel_desc,
+                    "lang": self.current_cat.get(),
+                    "speed": self._eb_speed_var.get(),
+                    "volume": self._eb_vol_var.get(),
+                    "pitch": self._eb_pitch_var.get(),
+                })
+            self.destroy()
+            return
         if self.result_instruct:
             if self.on_select:
                 self.on_select(self.result_instruct)
@@ -1942,7 +3147,9 @@ def _read_local_version():
     try:
         vf = Path(__file__).parent / "version.txt"
         if vf.exists():
-            return vf.read_text(encoding="utf-8").strip()
+            # FIX v3.37: dung utf-8-sig de tu dong strip BOM
+            # (PowerShell `echo > file` mac dinh ghi BOM UTF-8 -> tool parse loi)
+            return vf.read_text(encoding="utf-8-sig").strip()
     except Exception:
         pass
     return "2.1"  # fallback neu chua co file
@@ -2093,150 +3300,144 @@ def check_for_update(root, silent=False):
                   relief="flat", cursor="hand2", padx=12, pady=6).pack(side="left")
 
     def _do_update(new_ver):
-        """Tai file moi, backup ban cu, khoi dong lai."""
-        try:
-            import urllib.request, shutil
+        """FIX v3.65 (12): tai va chay THANG bo cai dat day du
+        (MagicVoice_Setup_vX.XX.exe, /VERYSILENT) thay vi va tung file rieng
+        le (FILES_TO_UPDATE + updater.bat swap nhu truoc). Giai quyet DUT
+        DIEM van de "cham 1 buoc" (khong con file nao co the bi thieu nua,
+        vi moi lan update la cai dat lai TOAN BO tu ban moi nhat, khong con
+        phu thuoc FILES_TO_UPDATE/files_manifest.json).
 
-            script = Path(__file__).resolve()
-            backup = script.with_suffix(".py.bak")
+        Doi lai: cham hon vai chuc giay - vai phut (setup_helper.py tu kiem
+        tra da cai chua, KHONG cai lai tu dau) thay vi vai giay nhu truoc.
+
+        voices_library.json cua khach duoc BAO VE (installer dung
+        Flags: onlyifdoesntexist rieng cho file nay - xem MagicVoice.iss) -
+        khong bi xoa sach giong da luu moi lan update.
+
+        LUU Y QUAN TRONG: co che nay CHI co hieu luc TU v3.65 TRO DI - khach
+        dang o v3.64 tro ve truoc khi bam Cap Nhat se van chay CODE UPDATE
+        CU cua chinh ho (dang FILES_TO_UPDATE cu), khong the "nhay" thang
+        sang co che moi nay ngay duoc - gioi han kien truc khong the tranh
+        khoi (code quyet dinh CACH update la code dang chay TRUOC KHI
+        update, khong phai code cua ban moi). Tu khach da len duoc v3.65,
+        cac lan update SAU (v3.65->v3.66...) moi thuc su dung co che nay.
+        """
+        try:
+            import urllib.request, subprocess as _sp, sys as _sys, os as _os, tempfile as _tf
+            import socket as _sock2
+
+            # FIX v3.65 (14): dat rieng timeout du dai (60s/lan doc socket) cho
+            # buoc tai installer nay - khong phu thuoc gia tri con sot lai tu
+            # _is_online()/_check_network_badge() (truoc day set toi 2-3s toan
+            # cuc, khien urlretrieve() file lon vai MB bi "read operation timed
+            # out" giua chung du mang binh thuong - xem FIX 14 o 2 ham do).
+            _sock2.setdefaulttimeout(60)
+
+            app_dir = Path(__file__).resolve().parent
+            installer_url = (
+                f"https://github.com/buihuubac/magicvoice-releases/releases/"
+                f"download/v{new_ver}/MagicVoice_Setup_v{new_ver}.exe"
+            )
 
             # Progress window
             prog = tk.Toplevel(root)
             prog.title("Dang cap nhat...")
-            prog.geometry("360x120")
+            prog.geometry("420x160")
             prog.configure(bg=P["white"])
             prog.resizable(False, False)
             prog.grab_set()
+            try: prog.iconbitmap(str(_SCRIPT_DIR / "MagicVoice.ico"))
+            except: pass
+
             lbl = tk.Label(prog, text=f"Dang tai v{new_ver}...",
-                           font=(FN,10), bg=P["white"], fg=P["purple"], pady=16)
+                           font=(FN,11,"bold"), bg=P["white"], fg=P["purple"], pady=12)
             lbl.pack()
-            bar_bg = tk.Frame(prog, bg=P["border"], height=6, width=300)
-            bar_bg.pack()
-            bar = tk.Frame(bar_bg, bg=P["purple"], height=6, width=0)
-            bar.place(x=0, y=0, height=6)
-            tk.Label(prog, text="Vui long cho...",
-                     font=(FN,8), bg=P["white"], fg=P["dim"]).pack(pady=4)
+            status_lbl = tk.Label(prog, text="Chuan bi...",
+                                  font=(FN,9), bg=P["white"], fg=P["sub"])
+            status_lbl.pack()
+            bar_bg = tk.Frame(prog, bg=P["border"], height=8, width=360)
+            bar_bg.pack(pady=10)
+            bar = tk.Frame(bar_bg, bg=P["purple"], height=8, width=0)
+            bar.place(x=0, y=0, height=8)
+            tk.Label(prog, text="Vui long khong tat app...",
+                     font=(FN,8), bg=P["white"], fg=P["dim"]).pack()
             prog.update()
 
-            # Animate bar
-            for w in range(0, 280, 14):
-                bar.config(width=w)
-                prog.update()
-                import time; time.sleep(0.02)
+            installer_path = _os.path.join(_tf.gettempdir(), f"MagicVoice_Setup_v{new_ver}.exe")
 
-            # Backup & download
-            shutil.copy(script, backup)
-            urllib.request.urlretrieve(UPDATE_URL, str(script))
+            def _report(block_num, block_size, total_size):
+                if total_size > 0:
+                    pct = min(100, int(block_num * block_size * 100 / total_size))
+                    bar.config(width=int(360 * pct / 100))
+                    status_lbl.config(text=f"Dang tai bo cai dat... {pct}%")
+                    prog.update()
 
-            # MOI: tai extra files (license_guard.py, ...)
-            # Neu tai file nao loi -> rollback va bao loi
-            extra_backups = {}
             try:
-                for _fname, _furl in UPDATE_EXTRA_FILES.items():
-                    _dest = script.parent / _fname
-                    if _dest.exists():
-                        _bak = _dest.with_suffix(_dest.suffix + ".bak")
-                        shutil.copy(_dest, _bak)
-                        extra_backups[str(_dest)] = str(_bak)
-                    urllib.request.urlretrieve(_furl, str(_dest))
-            except Exception as _ex_err:
-                # Rollback: khoi phuc script chinh
-                try: shutil.copy(backup, script)
+                urllib.request.urlretrieve(installer_url, installer_path, _report)
+            except Exception as _dl_err:
+                try: _os.remove(installer_path)
                 except Exception: pass
-                # Rollback: khoi phuc extra files
-                for _dp, _bp in extra_backups.items():
-                    try: shutil.copy(_bp, _dp)
-                    except Exception: pass
-                raise RuntimeError(
-                    f"Khong tai duoc file bo sung: {_ex_err}") from _ex_err
+                raise RuntimeError(f"Tai bo cai dat that bai: {_dl_err}") from _dl_err
 
-            # Luu version.txt local de lan sau khong hoi lai
-            local_ver_file = script.parent / "version.txt"
-            urllib.request.urlretrieve(VERSION_URL, str(local_ver_file))
+            if not _os.path.exists(installer_path) or _os.path.getsize(installer_path) < 500_000:
+                try: _os.remove(installer_path)
+                except Exception: pass
+                raise RuntimeError("File cai dat tai ve khong hop le (qua nho/rong)")
 
-            # FIX: Xoa CACHE CU truoc khi restart de tranh dung cache loi
-            # tu phien ban truoc (vi du: ref_text Whisper transcribe sai luu vinh vien
-            # vao voices_library.json, .deps_installed flag, __pycache__, .login_cache cu).
-            # Voice clone se transcribe lai tu dau voi code moi -> chinh xac hon.
-            _cache_cleared = []
-            try:
-                # 1. Xoa __pycache__ (cache bytecode Python cua phien ban cu)
-                _pycache = script.parent / "__pycache__"
-                if _pycache.exists():
-                    shutil.rmtree(str(_pycache), ignore_errors=True)
-                    _cache_cleared.append("__pycache__")
-
-                # 2. Xoa .deps_installed flag de check lai dependencies
-                _deps_flag = script.parent / ".deps_installed"
-                if _deps_flag.exists():
-                    _deps_flag.unlink()
-                    _cache_cleared.append(".deps_installed")
-
-                # 3. Xoa cac file _trim*.wav cache cu (ref_audio da cat)
-                # de _prepare_ref_audio cat lai voi MAX_SEC moi
-                for _trim_file in script.parent.rglob("*_trim*.wav"):
-                    try:
-                        _trim_file.unlink()
-                        _cache_cleared.append(_trim_file.name)
-                    except Exception:
-                        pass
-
-                # 4. Reset ref_text trong voices_library.json
-                # Day la nguyen nhan chinh: ref_text bi rac tu Whisper sai phien ban truoc
-                # Reset ve "" -> code moi se transcribe lai voi Whisper moi (chinh xac hon)
-                # KHONG xoa voice, chi reset ref_text cua nhung voice co ref_audio
-                _voices_file = script.parent / "voices_library.json"
-                if _voices_file.exists():
-                    try:
-                        import json as _jc
-                        _data = _jc.loads(_voices_file.read_text(encoding="utf-8"))
-                        _reset_count = 0
-                        for _v in _data:
-                            # Chi reset voice clone (co ref_audio), khong dung voice design
-                            if _v.get("ref_audio") and _v.get("ref_text"):
-                                _old_ref = _v.get("ref_text", "")
-                                # Chi reset neu nghi la rac:
-                                # - Placeholder cu (Xin chao..., This is a sample...)
-                                # - Qua ngan (< 10 ky tu - chac chan rac)
-                                _is_garbage = (
-                                    "Xin chào, đây là giọng đọc mẫu" in _old_ref
-                                    or "This is a sample voice recording" in _old_ref
-                                    or "Đây là đoạn ghi âm giọng" in _old_ref
-                                    or len(_old_ref.strip()) < 10
-                                )
-                                if _is_garbage:
-                                    _v["ref_text"] = ""
-                                    _reset_count += 1
-                        if _reset_count > 0:
-                            _voices_file.write_text(
-                                _jc.dumps(_data, ensure_ascii=False, indent=2),
-                                encoding="utf-8")
-                            _cache_cleared.append(f"reset {_reset_count} voice ref_text rac")
-                    except Exception as _ve:
-                        print(f"[Update] Loi reset ref_text: {_ve}")
-            except Exception as _ce:
-                print(f"[Update] Loi xoa cache: {_ce}")
-
-            bar.config(width=300)
+            bar.config(width=360)
+            status_lbl.config(text="Hoan tat, dang cai dat lai...")
             prog.update()
-            time.sleep(0.3)
+            import time
+            time.sleep(0.5)
             prog.destroy()
-
-            _cache_msg = ""
-            if _cache_cleared:
-                _cache_msg = f"\n\nDa xoa cache cu: {', '.join(_cache_cleared[:5])}"
-                if len(_cache_cleared) > 5:
-                    _cache_msg += f" va {len(_cache_cleared)-5} muc khac"
 
             messagebox.showinfo(
                 "Cap nhat thanh cong!",
-                f"Da cap nhat len v{new_ver}!{_cache_msg}\n\n"
-                "App se tu khoi dong lai ngay bay gio.")
+                f"Da tai xong v{new_ver}!\n\n"
+                "App se dong lai va tu cai dat lai trong giay lat (co the mat "
+                "vai chuc giay - vai phut), sau do tu mo lai. "
+                "Vui long KHONG tat may tinh trong luc nay.")
 
-            # Restart app
-            import subprocess as _sp, sys as _sys
-            _sp.Popen([_sys.executable, str(script)])
-            root.after(300, root.destroy)
+            # FIX v3.65 (12): sinh 1 file .bat TAM (khong can co san tren may
+            # khach - tu tao ngay tai day) de: (1) cho app HIEN TAI dong han
+            # roi moi tiep tuc (tranh loi file .pyd dang bi khoa khi installer
+            # ghi de - dung lai chinh xac pattern wait-loop da chung minh on
+            # dinh cua updater.bat cu), (2) chay installer IM LANG, cai DUNG
+            # vao thu muc hien tai (/DIR=...) de bao toan duong dan cai dat
+            # cua khach (co the khac mac dinh cua Inno neu ho cai tu ban .bat/
+            # zip cu truoc day), (3) tu don dep installer + chinh no sau khi xong.
+            _pid = _os.getpid()
+            _wait_bat = _os.path.join(_tf.gettempdir(), f"_mv_update_{_pid}.bat")
+            _bat_content = (
+                "@echo off\r\n"
+                f"set \"APP_PID={_pid}\"\r\n"
+                ":wait_loop\r\n"
+                "tasklist /FI \"PID eq %APP_PID%\" 2>nul | find \"%APP_PID%\" >nul\r\n"
+                "if errorlevel 1 goto :run_installer\r\n"
+                "ping -n 2 127.0.0.1 >nul 2>&1\r\n"
+                "goto :wait_loop\r\n"
+                ":run_installer\r\n"
+                "ping -n 2 127.0.0.1 >nul 2>&1\r\n"
+                f"\"{installer_path}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=\"{app_dir}\"\r\n"
+                f"del /f \"{installer_path}\" >nul 2>&1\r\n"
+                "del /f \"%~f0\" >nul 2>&1\r\n"
+            )
+            with open(_wait_bat, "w", encoding="utf-8") as _f:
+                _f.write(_bat_content)
+
+            # SW_HIDE + CREATE_NEW_PROCESS_GROUP: an cua so CMD, process tiep
+            # tuc song sau khi app chinh da dong (giong pattern cu da on dinh).
+            _si = _sp.STARTUPINFO()
+            _si.dwFlags = _sp.STARTF_USESHOWWINDOW
+            _si.wShowWindow = 0   # SW_HIDE
+            _sp.Popen(
+                ["cmd.exe", "/C", _wait_bat],
+                creationflags=0x00000200,  # CREATE_NEW_PROCESS_GROUP
+                startupinfo=_si,
+            )
+
+            # Dong app de installer co the ghi de file dang bi khoa
+            root.after(300, lambda: (root.destroy(), _sys.exit(0)))
 
         except Exception as e:
             try: prog.destroy()
@@ -2245,6 +3446,19 @@ def check_for_update(root, silent=False):
                 f"Cap nhat that bai:\n{e}\n\nThu lai sau.")
 
     threading.Thread(target=_check, daemon=True).start()
+
+
+def _quick_cuda_check() -> bool:
+    """Kiem tra CUDA co san KHONG import torch (~0ms, chi check file)."""
+    import os
+    # Windows: check NVIDIA CUDA driver DLL
+    for p in [r"C:\Windows\System32\nvcuda.dll",
+              r"C:\Windows\System32\nvml.dll",
+              r"C:\Windows\System32\nvidia-smi.exe",
+              r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"]:
+        if os.path.exists(p):
+            return True
+    return False
 
 
 class App(tk.Tk):
@@ -2256,6 +3470,18 @@ class App(tk.Tk):
         # v3.22: Single-session heartbeat
         self._heartbeat_stop = False
         self._heartbeat_fail_count = 0  # Demem so lan goi server fail lien tiep
+        # FIX v3.66 (bao mat 2026-07-24, theo yeu cau anh Bac): truoc day
+        # heartbeat CHI dong app khi server chu dong bao "kicked" (bi may
+        # khac dang nhap de) - neu khach (hoac ke crack) CHAN HAN MANG toi
+        # server (vd sua file hosts) ngay sau khi dang nhap 1 lan hop le,
+        # heartbeat mai mai chi nhan "error" (khong lien lac duoc server),
+        # KHONG BAO GIO bi kick -> app chay VO THOI HAN khong can server
+        # xac nhan lai lan nao nua. Gio theo doi THOI GIAN LIEN TUC mat ket
+        # noi - qua nguong (8 tieng) thi hien canh bao + tu dong dong app
+        # sau vai phut neu khach khong phan hoi.
+        self._heartbeat_offline_since = None      # timestamp bat dau mat ket noi lien tuc
+        self._heartbeat_offline_prompted = False  # da hien canh bao cho chu ky nay chua
+        self._offline_warn_win = None             # cua so canh bao dang hien (neu co)
 
         # FIX: Tu xoa cache rac 1 lan khi update len v3.17.
         # Vi sao: khach v3.16 update len v3.17 -> chay code update CUA v3.16 (cu),
@@ -2284,8 +3510,19 @@ class App(tk.Tk):
                 self.after(0, lambda: self._set_taskbar_icon(ico_str))
         except Exception:
             pass
-        self.geometry("1160x780")
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26): kich thuoc co dinh
+        # "1160x780" khien nut "Tao" (statusbar duoi cung) bi che/khuat tren
+        # may man hinh nho hoac do phan giai thap (vd laptop 1366x768 tro
+        # xuong, sau khi tru taskbar Windows co the khong con du 780px cao).
+        # Sua: mo TOI DA HOA theo dung man hinh that cua khach (Windows
+        # 'zoomed' state) thay vi 1 kich thuoc co dinh - dam bao luon du
+        # cho hien statusbar bat ke do phan giai may nao. Van giu minsize
+        # lam san neu khach tu bo phong to.
         self.minsize(960,660)
+        try:
+            self.state('zoomed')
+        except Exception:
+            self.geometry("1160x780")
         self.configure(bg=P["bg"])
 
         self.lib=VoiceLib()
@@ -2299,29 +3536,47 @@ class App(tk.Tk):
         # Tải cấu hình đã lưu
         self._cfg = load_config()
 
-        self.device_var   =tk.StringVar(value=self._cfg.get("device",
-            "cuda:0" if __import__("torch").cuda.is_available() else "cpu"))
-        self.dtype_var    =tk.StringVar(value=self._cfg.get("dtype","float16"))
-        self.steps_var    =tk.IntVar(value=self._cfg.get("steps",8))
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26, khoi dong bi crash):
+        # BUG THAT SU - self.tts_mode/edge_voice_var/fast_voice_var truoc
+        # day CHI duoc tao BEN TRONG _build_sidebar() (goi o dong ~3642),
+        # nhung _build_left() (goi o dong ~3633, TRUOC _build_sidebar) lai
+        # goi _build_srt_tab() - noi vua them nut chon nhanh THAM CHIEU
+        # THANG self.tts_mode.get() NGAY LUC TAO WIDGET (khong phai trong
+        # callback) -> AttributeError vi thuoc tinh chua ton tai, crash
+        # ngay khoi dong. Sua GOC: tao truoc cac bien trang thai dung chung
+        # nay O DAY (truoc khi bat ky tab/sidebar nao duoc build), de moi
+        # noi tham chieu deu an toan bat ke thu tu build.
+        self.tts_mode = tk.StringVar(value="omnivoice")
+        self.edge_voice_var = tk.StringVar(value="en-US-AriaNeural")
+        self.edge_voice_display = tk.StringVar(value=EDGE_VOICES_LIST[0][1])
+        self.fast_voice_var = tk.StringVar(value=FAST_VOICES_LIST[0][0])
+        self.fast_voice_display = tk.StringVar(value=FAST_VOICES_LIST[0][1])
+
+        _default_device = "cuda:0" if _quick_cuda_check() else "cpu"
+        self.device_var   =tk.StringVar(value=self._cfg.get("device", _default_device))
+        self.dtype_var    =tk.StringVar(value=self._cfg.get("dtype","float32"))
+        self.steps_var    =tk.IntVar(value=self._cfg.get("steps",24))
         self.speed_var    =tk.DoubleVar(value=1.0)
         self.vol_var      =tk.DoubleVar(value=1.0)
         self.pitch_var    =tk.DoubleVar(value=1.0)
         self.out_dir_var  =tk.StringVar(value=self._cfg.get("out_dir",
                             str(Path.home()/"Downloads"/"MagicVoice")))
         self.out_name_var =tk.StringVar(value="output")
-        self.fmt_var      =tk.StringVar(value=self._cfg.get("fmt",".mp3"))
+        self.fmt_var      =tk.StringVar(value=self._cfg.get("fmt",".wav"))
         self.post_proc_var=tk.BooleanVar(value=self._cfg.get("post_process", True))
         self.text_proc_var=tk.BooleanVar(value=self._cfg.get("text_process", True))
-        self.gap_var      =tk.IntVar(value=300)
+        self.gap_var      =tk.IntVar(value=400)
         self.narrator_var  =tk.BooleanVar(value=self._cfg.get('narrator_mode',False))
         self.script_proc_var=tk.BooleanVar(value=self._cfg.get('script_proc',False))
-        self.srt_timeline_var = tk.BooleanVar(value=False)  # Mac dinh Sequential - doc tu nhien hon
+        # FIX v3.67 (tinh nang moi, theo yeu cau anh Bac): xuat .srt timeline
+        # khop audio vua tao o tab SRT - mac dinh TAT (khach chu dong tich khi can).
+        self.srt_timeline_var = tk.BooleanVar(value=bool(self._cfg.get('srt_timeline_export', False)))
         self.srt_entries: list[SRTEntry]=[]
         self._txt_files:  list[str]=[]
 
         # ── MOI: Naming options TOAN CUC (ap dung cho moi tab) ──
-        # Mac dinh: prefix + so thu tu (voice_01, voice_02, ...)
-        self.out_name_mode   = tk.StringVar(value=self._cfg.get("out_name_mode","prefix"))
+        # Mac dinh: giu ten goc (neu khong dat ten, tu dong luu dung ten file input)
+        self.out_name_mode   = tk.StringVar(value=self._cfg.get("out_name_mode","keep"))
         self.out_prefix_var  = tk.StringVar(value=self._cfg.get("out_prefix","voice_"))
         self.out_start_var   = tk.IntVar(value=int(self._cfg.get("out_start",1)))
         self.out_pad_var     = tk.IntVar(value=int(self._cfg.get("out_pad",2)))
@@ -2341,6 +3596,8 @@ class App(tk.Tk):
                     break
         # Lưu cấu hình khi đóng app
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Auto-reload model khi doi device (sau khi _build xong)
+        self.device_var.trace_add("write", self._on_device_changed)
         # Log thông tin voices khi khởi động
         self.after(300, self._log_startup_info)
         # Kiem tra mang NGAY khi khoi dong - set TRANSFORMERS_OFFLINE truoc khi load model
@@ -2359,15 +3616,69 @@ class App(tk.Tk):
         threading.Thread(target=_ensure_deps, daemon=True).start()
 
     def _detect_devices(self):
-        self.devices=["cpu"]
+        self.devices = ["cpu"]
+        threading.Thread(target=self._detect_devices_bg, daemon=True).start()
+
+    def _detect_devices_bg(self):
+        """Detect GPU/CUDA trong background — KHONG block UI."""
         try:
             import torch
+            devs = ["cpu"]
             for i in range(torch.cuda.device_count()):
-                self.devices.append(f"cuda:{i}")
-            if getattr(getattr(torch,"backends",None),"mps",None) and \
+                devs.append(f"cuda:{i}")
+            if getattr(getattr(torch, "backends", None), "mps", None) and \
                torch.backends.mps.is_available():
-                self.devices.append("mps")
-        except: pass
+                devs.append("mps")
+            self.devices = devs
+            # Neu quick_check sai (khong co CUDA that su) va device_var la cuda:0 → sua ve cpu
+            if self.device_var.get().startswith("cuda") and not torch.cuda.is_available():
+                self.after(0, lambda: self.device_var.set("cpu"))
+            # Cap nhat combobox values neu da tao roi
+            if hasattr(self, "_device_cb"):
+                self.after(0, lambda d=devs: self._device_cb.configure(values=d))
+            # Lan dau chay: tu dong chon preset phu hop voi GPU
+            if not self._cfg.get("preset_detected"):
+                self._auto_detect_preset()
+        except Exception:
+            pass
+
+    def _auto_detect_preset(self):
+        """Phat hien GPU/VRAM va tu dong chon preset lan dau chay."""
+        try:
+            import torch
+            _vram_gb = 0.0
+            _gpu_name = "CPU only"
+            if torch.cuda.is_available():
+                props = torch.cuda.get_device_properties(0)
+                _vram_gb = props.total_memory / (1024 ** 3)
+                _gpu_name = props.name
+            # >= 6GB VRAM: Chuan (float32/24 steps)
+            # < 6GB hoac CPU: May yeu (float16/8 steps)
+            if _vram_gb >= 6.0:
+                preset, dtype, steps = "Chuẩn", "float32", 24
+            else:
+                preset, dtype, steps = "Máy yếu", "float16", 8
+
+            def _apply():
+                self.dtype_var.set(dtype)
+                self.steps_var.set(steps)
+                if hasattr(self, "_cfg_preset_var"):
+                    self._cfg_preset_var.set(preset)
+                self._cfg.update({"dtype": dtype, "steps": steps,
+                                   "preset_detected": True})
+                save_config(self._cfg)
+                if _vram_gb > 0:
+                    self._log(
+                        f"🖥 GPU: {_gpu_name} ({_vram_gb:.1f}GB VRAM)"
+                        f" → tự động chọn [{preset}]"
+                        f" (float{dtype[-2:]}/steps={steps})", "info")
+                else:
+                    self._log(
+                        "🖥 Không có GPU → tự động chọn [Máy yếu]"
+                        " (float16/steps=8)", "info")
+            self.after(0, _apply)
+        except Exception:
+            pass
 
     # ─────────────────────────── LAYOUT ───────────────────────────
     def _build(self):
@@ -2384,16 +3695,18 @@ class App(tk.Tk):
         left.pack(side="left",fill="both",expand=True)
         self._build_left(left)
 
-        tk.Frame(main,bg=P["border"],width=1).pack(side="left",fill="y")
+        self._right_divider=tk.Frame(main,bg=P["border"],width=1)
+        self._right_divider.pack(side="left",fill="y")
 
         # RIGHT — settings sidebar
-        right=tk.Frame(main,bg=P["white"],width=290)
-        right.pack(side="right",fill="y")
-        right.pack_propagate(False)
-        self._build_sidebar(right)
+        self._right_pane=tk.Frame(main,bg=P["white"],width=290)
+        self._right_pane.pack(side="right",fill="y")
+        self._right_pane.pack_propagate(False)
+        self._build_sidebar(self._right_pane)
 
         # ── Statusbar ──
-        tk.Frame(self,bg=P["border"],height=1).pack(fill="x")
+        self._statusbar_sep=tk.Frame(self,bg=P["border"],height=1)
+        self._statusbar_sep.pack(fill="x")
         self._build_statusbar()
 
     def _build_topbar(self):
@@ -2431,6 +3744,42 @@ class App(tk.Tk):
             cb=ttk.Combobox(rc,textvariable=var,values=vals,
                             state="readonly",width=w,font=(FN,9))
             cb.pack(side="left",padx=3)
+            if var is self.device_var:
+                self._device_cb = cb
+            elif var is self.dtype_var:
+                cb.bind("<<ComboboxSelected>>", self._on_model_cfg_changed)
+
+        # Steps spinbox
+        tk.Label(rc,text="Steps:",font=(FN,8),bg=P["white"],
+                 fg=P["dim"]).pack(side="left",padx=(6,0))
+        _spx = tk.Spinbox(rc,from_=4,to=50,increment=1,textvariable=self.steps_var,
+                   width=4,font=(FN,9),relief="flat",
+                   bg=P["white"],fg=P["text"],
+                   highlightthickness=1,highlightbackground=P["border"],
+                   command=self._on_model_cfg_changed)
+        _spx.pack(side="left",padx=(2,6),ipady=2)
+        _spx.bind("<FocusOut>", self._on_model_cfg_changed)
+        _spx.bind("<Return>",   self._on_model_cfg_changed)
+
+        # Cau hinh nhanh: Chuan (24/fp32) hoac May yeu (8/fp16)
+        self._cfg_preset_var = tk.StringVar(value="Chuẩn")
+        _cfg_cb = ttk.Combobox(rc,textvariable=self._cfg_preset_var,
+                               values=["Chuẩn","Máy yếu"],
+                               state="readonly",width=9,font=(FN,9))
+        _cfg_cb.pack(side="left",padx=(0,6))
+        def _apply_cfg(e=None):
+            if self._cfg_preset_var.get() == "Máy yếu":
+                self.steps_var.set(8)
+                self.dtype_var.set("float16")
+            else:
+                self.steps_var.set(24)
+                self.dtype_var.set("float32")
+            # Luu lua chon cua user, danh dau da set de lan sau khong auto-override
+            self._cfg.update({"steps": self.steps_var.get(),
+                               "dtype": self.dtype_var.get(),
+                               "preset_detected": True})
+            save_config(self._cfg)
+        _cfg_cb.bind("<<ComboboxSelected>>",_apply_cfg)
 
         self.load_btn=tk.Button(rc,text="⬇  Tải Model",
                                  command=self._load_model,
@@ -2449,19 +3798,30 @@ class App(tk.Tk):
         self._tab_labels={}   # MOI: luu text goc de restore khi bo cham tron
         tabs=[("text","📄 Văn Bản"),("srt","🎞 Phụ Đề SRT"),
               ("batch","📁 Hàng Loạt"),("clone","🎤 Clone Voice"),
-              ("script","✍ Kịch Bản")]
+              ("script","✍ Kịch Bản"),("ghep","🎬 Ghép Video"),
+              ("giahan","💳 Gia Hạn")]
 
         content=tk.Frame(parent,bg=P["bg"])
         content.pack(fill="both",expand=True)
 
+        self._tab_indicators = {}  # bottom-border indicator frames
         for key,label in tabs:
             frm=tk.Frame(content,bg=P["bg"])
             self.tab_frames[key]=frm
-            btn=tk.Button(tab_bar,text=label,
+            # Wrap tab button + indicator trong 1 frame dọc
+            _tw = tk.Frame(tab_bar, bg=P["bg"])
+            _tw.pack(side="left")
+            btn=tk.Button(_tw,text=label,
                           command=lambda k=key:self._switch_tab(k),
                           font=(FN,10),relief="flat",cursor="hand2",
-                          padx=18,pady=11,bg=P["bg"],fg=P["sub"])
-            btn.pack(side="left")
+                          padx=16,pady=9,bg=P["bg"],fg=P["sub"],
+                          bd=0,
+                          activebackground=P["sel"],activeforeground=P["purple"])
+            btn.pack(fill="x")
+            # Indicator line (bottom-border)
+            ind = tk.Frame(_tw, bg=P["bg"], height=3)
+            ind.pack(fill="x")
+            self._tab_indicators[key] = ind
             self.tab_btns[key]=btn
             self._tab_labels[key]=label   # luu label goc
 
@@ -2470,6 +3830,8 @@ class App(tk.Tk):
         self._build_batch_tab(self.tab_frames["batch"])
         self._build_clone_tab(self.tab_frames["clone"])
         self._build_script_tab(self.tab_frames["script"])
+        self._build_ghep_tab(self.tab_frames["ghep"])
+        self._build_giahan_tab(self.tab_frames["giahan"])
         self._switch_tab("text")
 
     def _switch_tab(self, key):
@@ -2478,18 +3840,49 @@ class App(tk.Tk):
         for k,f in self.tab_frames.items():
             f.pack_forget()
         self.tab_frames[key].pack(fill="both",expand=True,padx=0)
+
+        # Tab Ghép Video: ẩn sidebar TTS + thanh tạo (không liên quan đến ghép video)
+        _prev_ghep = getattr(self, "_ghep_tab_active", False)
+        _now_ghep  = (key == "ghep")
+        self._ghep_tab_active = _now_ghep
+        _panels = [getattr(self, "_right_divider", None),
+                   getattr(self, "_right_pane", None),
+                   getattr(self, "_statusbar_sep", None),
+                   getattr(self, "_statusbar_frame", None),
+                   getattr(self, "_log_bar", None),
+                   getattr(self, "logbox", None)]
+        _panels = [w for w in _panels if w is not None]
+        if _now_ghep:
+            for w in _panels:
+                w.pack_forget()
+        elif _prev_ghep:
+            # Khôi phục đúng thứ tự pack: sidebar → statusbar → log
+            self._right_pane.pack(side="right", fill="y")
+            self._right_divider.pack(side="left", fill="y")
+            self._statusbar_sep.pack(fill="x")
+            self._statusbar_frame.pack(fill="x")
+            if hasattr(self, "_log_bar"):
+                self._log_bar.pack(fill="x")
+            if hasattr(self, "logbox"):
+                self.logbox.pack(fill="x", padx=0)
         for k,b in self.tab_btns.items():
             active=k==key
             # MOI: danh dau tab dang chay bang cham tron (•)
             is_run = (k == getattr(self, "_running_tab", None))
             _orig = self._tab_labels.get(k, "") if hasattr(self, "_tab_labels") else b.cget("text").replace(" •","").rstrip()
             _label = _orig + (" •" if is_run else "")
+            if is_run:
+                _bg = "#fef3c7"; _fg = P["red"]; _ind = P["red"]
+            elif active:
+                _bg = P["sel"]; _fg = P["purple"]; _ind = P["purple"]
+            else:
+                _bg = P["bg"]; _fg = P["sub"]; _ind = P["bg"]
             b.configure(
-                text=_label,
-                fg=(P["red"] if is_run else (P["purple"] if active else P["sub"])),
-                bg=P["white"] if active else P["bg"],
+                text=_label, fg=_fg, bg=_bg,
                 font=(FN,10,"bold") if (active or is_run) else (FN,10),
             )
+            if hasattr(self, "_tab_indicators") and k in self._tab_indicators:
+                self._tab_indicators[k].configure(bg=_ind)
 
     def _refresh_tab_indicators(self):
         """Update style nut tab (cham tron •) MA KHONG goi _switch_tab."""
@@ -2502,12 +3895,18 @@ class App(tk.Tk):
                 is_run = (k == run)
                 _orig  = self._tab_labels.get(k, "")
                 _label = _orig + (" •" if is_run else "")
+                if is_run:
+                    _bg = "#fef3c7"; _fg = P["red"]; _ind = P["red"]
+                elif active:
+                    _bg = P["sel"]; _fg = P["purple"]; _ind = P["purple"]
+                else:
+                    _bg = P["bg"]; _fg = P["sub"]; _ind = P["bg"]
                 b.configure(
-                    text=_label,
-                    fg=(P["red"] if is_run else (P["purple"] if active else P["sub"])),
-                    bg=P["white"] if active else P["bg"],
+                    text=_label, fg=_fg, bg=_bg,
                     font=(FN,10,"bold") if (active or is_run) else (FN,10),
                 )
+                if hasattr(self, "_tab_indicators") and k in self._tab_indicators:
+                    self._tab_indicators[k].configure(bg=_ind)
         except Exception:
             pass
 
@@ -2518,26 +3917,39 @@ class App(tk.Tk):
                          highlightbackground=P["border"])
         inner.pack(fill="both", expand=True, padx=14, pady=10)
 
-        # ── Toolbar ──
-        tb = tk.Frame(inner, bg=P["white"], pady=6)
+        # ── Toolbar row 1: label + action buttons (luôn đủ các nút) ──
+        tb = tk.Frame(inner, bg=P["white"], pady=5)
         tb.pack(fill="x", padx=10)
-        tk.Label(tb, text="Nhập văn bản cần đọc",
-                 font=(FN,10), bg=P["white"],
-                 fg=P["label"]).pack(side="left")
+        # Pack right-side buttons TRƯỚC (đảm bảo luôn hiển thị dù window hẹp)
         self.char_lbl = tk.Label(tb, text="0 ký tự",
                                   font=(FN,9), bg=P["white"], fg=P["dim"])
-        self.char_lbl.pack(side="right")
-        for txt, cmd in [("📂 Mở TXT", self._import_txt),
-                          ("🗑 Xóa", lambda: self.txt_in.delete("1.0","end"))]:
+        self.char_lbl.pack(side="right", padx=(4,0))
+        tk.Frame(tb, bg=P["border"], width=1).pack(side="right", fill="y", pady=2, padx=4)
+        for txt, cmd, _bg, _fg in [
+            ("📂 Mở TXT", self._import_txt,     P["hover"],  P["label"]),
+            ("🗑 Xóa",    lambda: self.txt_in.delete("1.0","end"), "#fff5f5", P["red"]),
+        ]:
             tk.Button(tb, text=txt, command=cmd,
-                      font=(FN,9), bg=P["hover"], fg=P["label"],
-                      relief="flat", cursor="hand2", padx=8, pady=3
-                      ).pack(side="right", padx=(0,4))
+                      font=(FN,9), bg=_bg, fg=_fg,
+                      relief="flat", cursor="hand2", padx=8, pady=4,
+                      activebackground=P["sel"], activeforeground=P["purple"],
+                      highlightthickness=1, highlightbackground=P["border"]
+                      ).pack(side="right", padx=(0,3))
+        self._txt_prev_btn = tk.Button(tb, text="🎧 Nghe Thử",
+                      command=self._preview_text_input,
+                      font=(FN,9,"bold"), bg="#f0fdf4", fg="#16a34a",
+                      relief="flat", cursor="hand2", padx=10, pady=4,
+                      activebackground="#dcfce7", activeforeground="#15803d",
+                      highlightthickness=1, highlightbackground="#86efac")
+        self._txt_prev_btn.pack(side="right", padx=(0,4))
+        tk.Label(tb, text="📝 Văn Bản",
+                 font=(FN,10,"bold"), bg=P["white"],
+                 fg=P["label"]).pack(side="left")
 
         tk.Frame(inner, bg=P["border"], height=1).pack(fill="x")
 
         # ── Char cleaner bar ──
-        cbar = tk.Frame(inner, bg=P["sidebar"], pady=4)
+        cbar = tk.Frame(inner, bg=P["sidebar"], pady=3)
         cbar.pack(fill="x")
         tk.Label(cbar, text="  Xóa ký tự:",
                  font=(FN,8), bg=P["sidebar"],
@@ -2545,10 +3957,10 @@ class App(tk.Tk):
         for lbl, ch in [("*","*"),("/","/"),(  "#","#"),("---","---"),("...","...")]:
             tk.Button(cbar, text=lbl,
                       command=lambda c=ch: self._del_char_from_text(c),
-                      font=("Consolas",8), bg=P["white"], fg=P["text"],
-                      relief="flat", cursor="hand2", padx=6, pady=2,
-                      highlightthickness=1,
-                      highlightbackground=P["border"]
+                      font=("Consolas",8), bg=P["white"], fg=P["label"],
+                      relief="flat", cursor="hand2", padx=7, pady=3,
+                      activebackground=P["sel"], activeforeground=P["purple"],
+                      highlightthickness=1, highlightbackground=P["border"]
                       ).pack(side="left", padx=2)
         tk.Label(cbar, text="|  Tùy chỉnh:",
                  font=(FN,8), bg=P["sidebar"],
@@ -2563,13 +3975,55 @@ class App(tk.Tk):
         tk.Button(cbar, text="Xóa Tất Cả",
                   command=self._del_custom_char,
                   font=(FN,8,"bold"), bg=P["red"], fg="white",
-                  relief="flat", cursor="hand2", padx=8, pady=3
+                  relief="flat", cursor="hand2", padx=8, pady=3,
+                  activebackground="#dc2626", activeforeground="white"
                   ).pack(side="left", padx=4)
         tk.Button(cbar, text="🔄 Khôi phục",
                   command=self._restore_text,
                   font=(FN,8), bg=P["hover"], fg=P["label"],
-                  relief="flat", cursor="hand2", padx=8, pady=3
+                  relief="flat", cursor="hand2", padx=8, pady=3,
+                  activebackground=P["sel"], activeforeground=P["purple"]
                   ).pack(side="left", padx=2)
+
+        tk.Frame(inner, bg=P["border"], height=1).pack(fill="x")
+
+        # ── Toi uu doc (TTS-friendly) bar ──
+        # Bat mac dinh - chi doi dau cau/khoang trang/gach noi, KHONG doi tu.
+        # Chi ap dung tren BAN SAO ngay truoc khi tao voice (o _do_text),
+        # khong sua o van ban goc cua khach.
+        tfbar = tk.Frame(inner, bg=P["sidebar"], pady=3)
+        tfbar.pack(fill="x")
+        self.tts_friendly_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(tfbar, text="✨ Tối ưu đọc (TTS-friendly)",
+                        variable=self.tts_friendly_var,
+                        font=(FN,8,"bold"), bg=P["sidebar"], fg=P["label"],
+                        activebackground=P["sidebar"], selectcolor=P["white"],
+                        cursor="hand2"
+                        ).pack(side="left", padx=(4,2))
+        tk.Label(tfbar, text="(tách câu quá dài, bỏ gạch nối — giữ nguyên từ ngữ)",
+                 font=(FN,7), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        tk.Button(tfbar, text="👁 Xem trước",
+                  command=self._preview_tts_friendly,
+                  font=(FN,8), bg=P["white"], fg=P["label"],
+                  relief="flat", cursor="hand2", padx=8, pady=2,
+                  activebackground=P["sel"], activeforeground=P["purple"],
+                  highlightthickness=1, highlightbackground=P["border"]
+                  ).pack(side="right", padx=4)
+
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): them tuy chon "Xuat
+        # file phu de .srt khop giong doc" cho tab Van Ban - giong het tinh
+        # nang da co o tab Phu De SRT (self.srt_timeline_var), nhung dung
+        # bien RIENG cho tab nay vi day la 1 lua chon doc lap voi tab SRT.
+        _txt_tl_bar = tk.Frame(inner, bg=P["sidebar"], pady=3)
+        _txt_tl_bar.pack(fill="x")
+        self.text_srt_timeline_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(_txt_tl_bar, text="📝 Xuất file phụ đề .srt khớp giọng đọc",
+                        variable=self.text_srt_timeline_var,
+                        font=(FN,8,"bold"), bg=P["sidebar"], fg=P["label"],
+                        activebackground=P["sidebar"], selectcolor=P["white"],
+                        cursor="hand2").pack(side="left", padx=(4,2))
+        tk.Label(_txt_tl_bar, text="(timeline khớp đúng audio vừa tạo)",
+                 font=(FN,7), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
 
         tk.Frame(inner, bg=P["border"], height=1).pack(fill="x")
 
@@ -2614,67 +4068,67 @@ class App(tk.Tk):
                   command=self._srt_clear,
                   font=(FN,9),bg=P["hover"],fg=P["label"],
                   relief="flat",cursor="hand2",padx=8,pady=4
+                  ).pack(side="left",padx=(0,4))
+        tk.Button(top,text="🔁 Gọi lại phiên cũ",
+                  command=lambda: self._recall_session(tab_filter="srt"),
+                  font=(FN,9),bg=P["gold"],fg="white",
+                  relief="flat",cursor="hand2",padx=8,pady=4
                   ).pack(side="left")
         self.srt_cnt_lbl=tk.Label(top,text="",font=(FN,9),
                                    bg=P["white"],fg=P["dim"])
         self.srt_cnt_lbl.pack(side="right")
 
-        # Che do TTS: MagicVoice vs Edge TTS
-        self.srt_tts_mode = tk.StringVar(value="magic")
-        def _on_srt_mode_change(*a):
-            is_edge = self.srt_tts_mode.get() == "edge"
-            self.srt_voice_cb.pack_forget() if is_edge else None
-            self.srt_edge_cb.pack_forget() if not is_edge else None
-            if is_edge:
-                self.srt_edge_cb.pack(side="right", padx=(0,4))
-                self.srt_voice_info.config(text="🌐 EDGE", fg="#2563eb")
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26, sua lai lan 8): lan
+        # truoc TUONG da gop chung 1 hang nhung thuc ra van tao THEM 1 frame
+        # rieng (row2) dat NGAY DUOI - van la 2 hang, lam TANG chieu cao,
+        # day nut "Tao" (statusbar) ra ngoai man hinh vi cua so co the khong
+        # tu gian them. Sua THAT SU: nhet TRUC TIEP vao chung frame "top"
+        # (cung 1 hang voi Mo .srt/Xoa/Goi lai phien cu), khong tao frame
+        # rieng nua.
+        tk.Label(top, text="Chế độ:", font=(FN,9,"bold"),
+                 bg=P["white"], fg=P["label"]).pack(side="left", padx=(14,4))
+        _srt_mode_btns = {}
+        for _mval, _mlbl in [("omnivoice","🤖 MagicVoice"),("edge","🌐 Edge"),("fast","⚡ MG Nhanh")]:
+            _is_sel = self.tts_mode.get() == _mval
+            _b = tk.Button(top, text=_mlbl, font=(FN,8,"bold" if _is_sel else "normal"),
+                           bg=P["purple"] if _is_sel else P["hover"],
+                           fg="white" if _is_sel else P["sub"],
+                           relief="flat", cursor="hand2", padx=7, pady=3, bd=0,
+                           activebackground="#3b60e0", activeforeground="white",
+                           command=lambda m=_mval: self._set_tts_mode(m))
+            _b.pack(side="left", padx=(0,3))
+            _srt_mode_btns[_mval] = _b
+        self._mode_btns_srt = _srt_mode_btns
+
+        # Combobox chon giong - ghi THANG vao bien chia se, khong giu trang
+        # thai rieng. Mode MagicVoice cung liet ke danh sach preset da luu
+        # (Clone/Design) - chon xong tu dong doi self.sel_idx + dong bo
+        # sidebar giong het bam preset o "Cai Dat San".
+        tk.Label(top, text="Giọng:", font=(FN,9,"bold"),
+                 bg=P["white"], fg=P["label"]).pack(side="left", padx=(10,4))
+        self.srt_pick_var = tk.StringVar()
+        self.srt_pick_cb = ttk.Combobox(top, textvariable=self.srt_pick_var,
+                                         state="readonly", font=(FN,9), width=22)
+        def _on_srt_pick(e=None):
+            _idx = self.srt_pick_cb.current()
+            _m = self.tts_mode.get()
+            if _m == "edge" and 0 <= _idx < len(EDGE_VOICES_LIST):
+                self.edge_voice_var.set(EDGE_VOICES_LIST[_idx][0])
+                self._set_tts_mode("edge")
+            elif _m == "fast" and 0 <= _idx < len(FAST_VOICES_LIST):
+                self.fast_voice_var.set(FAST_VOICES_LIST[_idx][0])
+                self._set_tts_mode("fast")
             else:
-                self.srt_voice_cb.pack(side="right", padx=(0,4))
-                self._refresh_srt_voices()
+                _magic_presets = [i for i, vp in enumerate(self.lib.profiles)
+                                   if vp.mode in ("clone", "design")]
+                if 0 <= _idx < len(_magic_presets):
+                    self.sel_idx = _magic_presets[_idx]
+                    self._set_tts_mode("omnivoice")
+                    self._update_sidebar()
+        self.srt_pick_cb.bind("<<ComboboxSelected>>", _on_srt_pick)
+        self.srt_pick_cb.pack(side="left")
 
-        tk.Radiobutton(top, text="🌐 Edge", variable=self.srt_tts_mode,
-                       value="edge", font=(FN,8), bg=P["white"],
-                       fg="#2563eb", activebackground=P["white"],
-                       command=_on_srt_mode_change).pack(side="right", padx=(4,0))
-        tk.Radiobutton(top, text="🤖 MagicVoice", variable=self.srt_tts_mode,
-                       value="magic", font=(FN,8), bg=P["white"],
-                       fg=P["purple"], activebackground=P["white"],
-                       command=_on_srt_mode_change).pack(side="right", padx=(8,2))
-
-        # Voice selector trong toolbar
-        tk.Label(top, text="🎙", font=(FN,11),
-                 bg=P["white"], fg=P["purple"]).pack(side="right", padx=(8,2))
-        self.srt_voice_info = tk.Label(top, text="", font=(FN,8),
-                                        bg=P["white"], fg=P["purple"])
-        self.srt_voice_info.pack(side="right")
-        self.srt_voice_var = tk.StringVar()
-        self.srt_voice_cb  = ttk.Combobox(top, textvariable=self.srt_voice_var,
-                                           state="readonly", font=(FN,9), width=22)
-        self.srt_voice_cb.pack(side="right", padx=(0,4))
-        # Edge TTS voice selector (an khi dung MagicVoice)
-        # FIX: Dung EDGE_VOICES_LIST module-level (60 giong) thay vi self._edge_voices
-        # vi luc nay sidebar chua build -> self._edge_voices chua ton tai
-        self.srt_edge_voice_var = tk.StringVar()
-        self.srt_edge_voice_display = tk.StringVar()
-        self.srt_edge_cb = ttk.Combobox(top, textvariable=self.srt_edge_voice_display,
-                                         state="readonly", font=(FN,9), width=32)
-        self.srt_edge_cb["values"] = [v[1] for v in EDGE_VOICES_LIST]
-        self.srt_edge_cb.set(EDGE_VOICES_LIST[0][1])
-        self.srt_edge_voice_var.set(EDGE_VOICES_LIST[0][0])
-        self.srt_edge_voice_display.set(EDGE_VOICES_LIST[0][1])
-        # Khi user chon voice -> cap nhat voice_var (la code voice goc)
-        def _on_srt_edge_pick(e):
-            idx = self.srt_edge_cb.current()
-            if 0 <= idx < len(EDGE_VOICES_LIST):
-                self.srt_edge_voice_var.set(EDGE_VOICES_LIST[idx][0])
-                self.srt_edge_voice_display.set(EDGE_VOICES_LIST[idx][1])
-        self.srt_edge_cb.bind("<<ComboboxSelected>>", _on_srt_edge_pick)
-        tk.Label(top, text="Voice:", font=(FN,9,"bold"),
-                 bg=P["white"], fg=P["purple"]).pack(side="right", padx=(0,2))
-        tk.Button(top, text="↻", command=self._refresh_srt_voices,
-                  font=(FN,8), bg=P["hover"], fg=P["label"],
-                  relief="flat", cursor="hand2", padx=4
-                  ).pack(side="right")
+        self.srt_voice_info = tk.Label(top, text="")
         self._refresh_srt_voices()
 
         tk.Frame(inner,bg=P["border"],height=1).pack(fill="x")
@@ -2689,10 +4143,45 @@ class App(tk.Tk):
         left_pane=tk.Frame(paned,bg=P["white"])
         paned.add(left_pane,minsize=200)
 
-        tk.Label(left_pane,
+        _srt_lbl_row=tk.Frame(left_pane,bg=P["white"])
+        _srt_lbl_row.pack(fill="x",padx=8,pady=(6,2))
+        tk.Label(_srt_lbl_row,
                  text="📝 Nhập văn bản hoặc SRT:",
                  font=(FN,9,"bold"),bg=P["white"],fg=P["label"]
-                 ).pack(anchor="w",padx=8,pady=(6,2))
+                 ).pack(side="left")
+        self._srt_prev_btn=tk.Button(_srt_lbl_row,text="🎧 Nghe Thử",
+                command=self._preview_srt_input,
+                font=(FN,9,"bold"),bg="#f0fdf4",fg="#16a34a",
+                relief="flat",cursor="hand2",padx=10,pady=2,
+                highlightthickness=1,highlightbackground="#86efac")
+        self._srt_prev_btn.pack(side="right")
+
+        # ── Toi uu doc (TTS-friendly) cho SRT ──
+        # Chi sua CHU trong tung entry (bo gach noi, tach cau qua dai o lien
+        # tu an toan) - KHONG dung/xoa entry, KHONG dam timestamp, nen an
+        # toan ve so dong/timing phu de.
+        _srt_tf_row = tk.Frame(left_pane, bg=P["white"])
+        _srt_tf_row.pack(fill="x", padx=8, pady=(0,4))
+        self.srt_tts_friendly_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(_srt_tf_row, text="✨ Tối ưu đọc (TTS-friendly)",
+                        variable=self.srt_tts_friendly_var,
+                        font=(FN,8,"bold"), bg=P["white"], fg=P["label"],
+                        activebackground=P["white"], selectcolor=P["sidebar"],
+                        cursor="hand2").pack(side="left")
+        tk.Label(_srt_tf_row, text="(chỉ sửa chữ trong từng dòng, không đổi timing)",
+                 font=(FN,7), bg=P["white"], fg=P["dim"]).pack(side="left", padx=(4,0))
+
+        # FIX v3.67 (tinh nang moi, theo yeu cau anh Bac): checkbox bat/tat
+        # xuat file .srt timeline khop audio vua tao (mac dinh TAT).
+        _srt_tl_row = tk.Frame(left_pane, bg=P["white"])
+        _srt_tl_row.pack(fill="x", padx=8, pady=(0,4))
+        tk.Checkbutton(_srt_tl_row, text="📝 Xuất file phụ đề .srt khớp giọng đọc",
+                        variable=self.srt_timeline_var,
+                        font=(FN,8,"bold"), bg=P["white"], fg=P["label"],
+                        activebackground=P["white"], selectcolor=P["sidebar"],
+                        cursor="hand2").pack(side="left")
+        tk.Label(_srt_tl_row, text="(timeline khớp đúng audio vừa tạo, không dùng SRT gốc)",
+                 font=(FN,7), bg=P["white"], fg=P["dim"]).pack(side="left", padx=(4,0))
 
         txt_frame=tk.Frame(left_pane,bg=P["white"])
         txt_frame.pack(fill="both",expand=True,padx=8,pady=(0,4))
@@ -2709,6 +4198,10 @@ class App(tk.Tk):
         self.srt_editor.pack(fill="both",expand=True)
         tsb.config(command=self.srt_editor.yview)
         self._ph(self.srt_editor, "Dan van ban / SRT vao day... Moi dong = 1 cau")
+        # Auto-clear preview khi paste/nhap kịch bản mới
+        def _on_srt_paste(e=None):
+            self.after(50, self._clear_srt_preview)
+        self.srt_editor.bind("<<Paste>>", _on_srt_paste)
         # Hint label
         tk.Label(left_pane,
                  text="Paste SRT hoac van ban vao day → nhan Tao de doc",
@@ -2753,18 +4246,6 @@ class App(tk.Tk):
                        selectcolor=P["white"],activebackground=P["white"]
                        ).pack(side="left")
 
-        # Timeline mode
-        opt2=tk.Frame(inner,bg=P["white"],pady=2); opt2.pack(fill="x",padx=10)
-        tk.Checkbutton(opt2,
-                       text="📐 Khớp đúng Timeline SRT (mỗi câu đặt đúng timestamp)",
-                       variable=self.srt_timeline_var,
-                       bg=P["white"],fg=P["purple"],font=(FN,9,"bold"),
-                       selectcolor=P["white"],activebackground=P["white"]
-                       ).pack(side="left")
-        tk.Label(opt2,
-                 text="  ← Tắt = ghép tuần tự (file ngắn hơn)",
-                 bg=P["white"],fg=P["dim"],font=(FN,8)
-                 ).pack(side="left")
 
 
 
@@ -2800,6 +4281,32 @@ class App(tk.Tk):
             text="🏷 Cấu hình tên output (áp dụng cho mọi tab): bấm nút 🏷 trên thanh dưới",
             font=(FN,8,"italic"), bg=P["white"], fg=P["dim"]
         ).pack(anchor="w")
+
+        # ── Toi uu doc (TTS-friendly) - dung CHUNG bien voi tab SRT ──
+        # (tab SRT la noi tao bien nay - Batch build sau nen bien da co san)
+        _tf_batch_row = tk.Frame(inner, bg=P["white"])
+        _tf_batch_row.pack(fill="x", padx=10, pady=(0,4))
+        tk.Checkbutton(_tf_batch_row, text="✨ Tối ưu đọc (TTS-friendly)",
+                        variable=self.srt_tts_friendly_var,
+                        font=(FN,8,"bold"), bg=P["white"], fg=P["label"],
+                        activebackground=P["white"], selectcolor=P["sidebar"],
+                        cursor="hand2").pack(side="left")
+        tk.Label(_tf_batch_row, text="(áp dụng cho .txt trong Hàng Loạt — dùng chung với tab SRT)",
+                 font=(FN,7), bg=P["white"], fg=P["dim"]).pack(side="left", padx=(4,0))
+
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): them tuy chon "Xuat
+        # file phu de .srt khop giong doc" cho tab Hang Loat - dung CHUNG
+        # bien self.srt_timeline_var voi tab SRT (giong cach lam voi
+        # srt_tts_friendly_var ngay o tren), ap dung cho ca file .txt lan .srt.
+        _batch_tl_row = tk.Frame(inner, bg=P["white"])
+        _batch_tl_row.pack(fill="x", padx=10, pady=(0,4))
+        tk.Checkbutton(_batch_tl_row, text="📝 Xuất file phụ đề .srt khớp giọng đọc",
+                        variable=self.srt_timeline_var,
+                        font=(FN,8,"bold"), bg=P["white"], fg=P["label"],
+                        activebackground=P["white"], selectcolor=P["sidebar"],
+                        cursor="hand2").pack(side="left")
+        tk.Label(_batch_tl_row, text="(áp dụng cho mọi file trong Hàng Loạt — dùng chung với tab SRT)",
+                 font=(FN,7), bg=P["white"], fg=P["dim"]).pack(side="left", padx=(4,0))
 
         # File list
         tk.Label(inner,text="Danh sách file sẽ xử lý:",font=(FN,9),
@@ -2861,6 +4368,11 @@ class App(tk.Tk):
                       activebackground=P["purple2"],activeforeground="white",
                       cursor="hand2",padx=10,pady=4
                       ).pack(side="right",padx=(4,0))
+        tk.Button(foot,text="📂 Phiên cũ",
+                  command=lambda: self._recall_session(tab_filter="batch"),
+                  font=(FN,9),bg=P["gold"],fg="white",relief="flat",
+                  cursor="hand2",padx=10,pady=4
+                  ).pack(side="right",padx=(4,0))
 
     # ─────── Tab: Kịch Bản ────────────────────────────────────────
     # ─────── Tab: Kịch Bản ────────────────────────────────────────
@@ -2881,52 +4393,89 @@ class App(tk.Tk):
 
     def _do_split(self, text, min_w, max_w, ovfl, by_clause):
         """
-        Chia text thanh cac dong SRT theo min/max tu.
-        FIX: Gop CROSS-PARAGRAPH de moi dong deu trong khoang [min_w, max_w].
-        Truoc day: paragraph ngan -> chunk ngan, khong ton trong min_w.
-        Gio: dồn toan bo unit thanh 1 list, chi chia khi dat min_w va gan max_w.
-        Chi dong CUOI CUNG cua toan bo text moi co the < min_w (vi het noi dung).
+        Chia text thanh cac dong SRT theo min_w/max_w tu.
+
+        by_clause=True (mac dinh):
+          - Don vi la CLAUSE (ket thuc bang .!?;) — giu nguyen, khong cat giua clause.
+          - Tich luy clause cho den khi cw >= min_w, sau do flush ngay (clause boundary).
+          - Moi dong LUON ket thuc bang dau cau (.!?;).
+          - Neu clause don le dai hon max_w + ovfl: chap nhan lam 1 dong rieng
+            (khong the cat giua cau vi se mat nghia).
+          - Dong cuoi co the < min_w neu het noi dung.
+
+        by_clause=False:
+          - Don vi la tung TU. Tich luy theo min/max thuan tuy.
+          - Sub-split "unit" nao > max_w (truong hop ly thuyet, para.split() luon = 1 tu).
         """
         import re as _re
         paras = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
 
-        # B1: gom TOAN BO units cua TOAN BO paragraph thanh 1 list
-        all_units = []
-        for para in paras:
-            units = self._split_clauses(para) if by_clause else para.split()
-            all_units.extend(units)
+        def _flush(c):
+            chunks.append(" ".join(c).strip())
+            return [], 0
 
-        # B2: chia all_units thanh chunks theo min/max
         chunks = []
-        cur, cw = [], 0
-        for u in all_units:
-            uw = self._count_words(u)
-            if cw == 0:
-                cur.append(u); cw += uw
-            elif cw < min_w:
-                # CHUA du min -> bat buoc them, ke ca khi vuot max
-                cur.append(u); cw += uw
-                if cw >= max_w:
-                    chunks.append(" ".join(cur).strip()); cur, cw = [], 0
-            else:
-                # cur da du min_w
-                if cw + uw <= max_w:
-                    cur.append(u); cw += uw
-                    if cw >= max_w:
-                        chunks.append(" ".join(cur).strip()); cur, cw = [], 0
-                elif cw + uw <= max_w + ovfl:
-                    cur.append(u); cw += uw
-                    chunks.append(" ".join(cur).strip()); cur, cw = [], 0
-                else:
-                    chunks.append(" ".join(cur).strip())
-                    cur, cw = [u], uw
 
-        # B3: xu ly chunk cuoi cung
+        if by_clause:
+            # ── CHE DO BY_CLAUSE: don vi la clause nguyen ─────────────────────────
+            # Thu thap toan bo clauses
+            all_clauses = []
+            for para in paras:
+                all_clauses.extend(self._split_clauses(para))
+
+            cur, cw = [], 0
+            for clause in all_clauses:
+                uw = self._count_words(clause)
+                if uw == 0:
+                    continue
+
+                if cw == 0:
+                    # Bat dau chunk moi
+                    cur.append(clause); cw += uw
+                    # Neu clause duy nhat nay da >= min_w, no san sang flush
+                    # (se flush khi gap clause tiep theo)
+                elif cw >= min_w:
+                    # Da du min_w tu o clause boundary hien tai
+                    # → flush, bat dau chunk moi voi clause nay
+                    cur, cw = _flush(cur)
+                    cur.append(clause); cw += uw
+                else:
+                    # Chua du min_w: LUON them vao, khong flush som
+                    # min_w la rang buoc CUNG — khong bao gio cat doan ngan hon min_w
+                    # max_w la rang buoc MEM — co the bi vuot neu can thiet de dat min_w
+                    cur.append(clause); cw += uw
+
+        else:
+            # ── CHE DO BY_WORD: don vi la tung tu ─────────────────────────────────
+            all_words = []
+            for para in paras:
+                all_words.extend(para.split())
+
+            cur, cw = [], 0
+            for word in all_words:
+                uw = 1
+                if cw == 0:
+                    cur.append(word); cw += uw
+                elif cw < min_w:
+                    cur.append(word); cw += uw
+                    # Khong flush khi chua du min_w (tuong tu fix by_clause)
+                else:
+                    if cw + uw <= max_w + ovfl:
+                        cur.append(word); cw += uw
+                        if cw >= max_w + ovfl:
+                            cur, cw = _flush(cur)
+                    else:
+                        cur, cw = _flush(cur)
+                        cur.append(word); cw = uw
+
+        # B3: xu ly chunk cuoi con lai
         if cur:
             joined = " ".join(cur).strip()
-            if cw < min_w and chunks:
+            cw_cur = self._count_words(joined)
+            if cw_cur < min_w and chunks:
+                # Chunk cuoi qua ngan: thu gop voi chunk truoc
                 last = chunks[-1]
-                if self._count_words(last) + cw <= max_w + ovfl:
+                if self._count_words(last) + cw_cur <= max_w + ovfl:
                     chunks[-1] = last + " " + joined
                 else:
                     chunks.append(joined)
@@ -2940,30 +4489,25 @@ class App(tk.Tk):
         h,m,s,cs = ms//3600000,(ms%3600000)//60000,(ms%60000)//1000,ms%1000
         return f"{h:02d}:{m:02d}:{s:02d},{cs:03d}"
 
-    def _make_srt(self, lines, mpc, gap):
+    def _make_srt(self, lines, mpc, gap, char_only=False):
         """
-        Tinh thoi gian SRT dua tren ca ki tu va so tu.
-        Dam bao du thoi gian de doc het dong.
-
-        FIX: MS_PER_WORD scale theo mpc thay vi hardcode 350.
-        Truoc day: mpc=20 cung khong co tac dung vi MS_PER_WORD=350
-        ghi de gia tri tinh theo char.
-        Gio: MS_PER_WORD ti le voi mpc (mpc=60 -> ~350, mpc=20 -> ~115)
-        => khi user chinh mpc thap se thay tac dung.
+        Tinh thoi gian SRT dua tren ki tu (va tu neu char_only=False).
+        char_only=True: chi dung n_chars * mpc — dung cho che do Theo Giay
+                        de dam bao thoi gian khop voi target da split.
+        char_only=False (mac dinh): lay max(char, word, floor) nhu cu.
         """
         srt, t, idx = "", 0, 1
-        # ms moi tu = mpc * 5.83 (vi mpc=60 cho ra ~350ms/word, ti le tu nhien)
-        ms_per_word = max(int(mpc * 5.83), 50)  # toi thieu 50ms/word de an toan
-        # Floor toi thieu cho 1 dong (truoc day: 800ms; gio scale theo mpc)
-        floor_ms = max(int(mpc * 13), 200)  # mpc=60->780, mpc=20->260
+        ms_per_word = max(int(mpc * 5.83), 50)
+        floor_ms = max(int(mpc * 13), 200)
         for line in lines:
             if not line.strip(): continue
             n_chars = len(line)
             n_words = len(line.split())
-            # Lay max giua tinh theo ki tu va tinh theo tu
             dur_by_char = n_chars * mpc
-            dur_by_word = n_words * ms_per_word
-            dur = max(dur_by_char, dur_by_word, floor_ms)
+            if char_only:
+                dur = max(dur_by_char, floor_ms)
+            else:
+                dur = max(dur_by_char, n_words * ms_per_word, floor_ms)
             srt += f"{idx}\n{self._fmt_time(t)} --> {self._fmt_time(t+dur)}\n{line}\n\n"
             t += dur + gap; idx += 1
         return srt
@@ -3049,52 +4593,91 @@ class App(tk.Tk):
         sbar = tk.Frame(inner, bg=P["sidebar"], pady=5)
         sbar.pack(fill="x", padx=0)
 
-        # Nhịp nghỉ
-        tk.Label(sbar, text="  Ngưỡng câu dài:",
-                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        # Nhịp nghỉ — biến giữ lại để code dùng, không hiển thị UI
         self.script_thresh = tk.IntVar(value=60)
-        tk.Spinbox(sbar, from_=30, to=200, textvariable=self.script_thresh,
-                   width=4, font=(FN,8), bg=P["white"], relief="flat"
+        self.srt_mpc = tk.IntVar(value=60)
+
+        # SRT settings — Gap
+        tk.Label(sbar, text="  Gap:",
+                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        tk.Spinbox(sbar, from_=0, to=2000, textvariable=self.gap_var,
+                   width=5, font=(FN,8), bg=P["white"], relief="flat"
                    ).pack(side="left", padx=2)
-        tk.Label(sbar, text="ký tự  |",
+        tk.Label(sbar, text="ms  |",
                  font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
 
-        # SRT settings
-        tk.Label(sbar, text="  SRT — Min:",
-                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        # Che do chia SRT — radio button
+        tk.Label(sbar, text="  Chế độ:",
+                 font=(FN,8,"bold"), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        self.srt_mode = tk.IntVar(value=0)  # 0=min/max tu, 1=theo giay
+
+        # --- Frame cho che do 0: Min Max tu ---
         self.srt_min_w = tk.IntVar(value=20)
-        tk.Spinbox(sbar, from_=3, to=30, textvariable=self.srt_min_w,
-                   width=3, font=(FN,8), bg=P["white"], relief="flat"
-                   ).pack(side="left", padx=2)
-        tk.Label(sbar, text="Max:",
-                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
         self.srt_max_w = tk.IntVar(value=30)
-        tk.Spinbox(sbar, from_=8, to=50, textvariable=self.srt_max_w,
+        self.srt_by_clause = tk.BooleanVar(value=True)
+        self.srt_min_s = tk.IntVar(value=8)
+        self.srt_max_s = tk.IntVar(value=10)
+
+        _frm_word = tk.Frame(sbar, bg=P["sidebar"])
+        tk.Label(_frm_word, text="Min:",
+                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        tk.Spinbox(_frm_word, from_=3, to=30, textvariable=self.srt_min_w,
                    width=3, font=(FN,8), bg=P["white"], relief="flat"
                    ).pack(side="left", padx=2)
-        tk.Label(sbar, text="từ  |",
+        tk.Label(_frm_word, text="Max:",
                  font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
-
-        self.srt_by_clause = tk.BooleanVar(value=True)
-        tk.Checkbutton(sbar, text="Tách mệnh đề",
+        tk.Spinbox(_frm_word, from_=8, to=50, textvariable=self.srt_max_w,
+                   width=3, font=(FN,8), bg=P["white"], relief="flat"
+                   ).pack(side="left", padx=2)
+        tk.Label(_frm_word, text="từ",
+                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left", padx=(2,6))
+        tk.Checkbutton(_frm_word, text="Tách mệnh đề",
                        variable=self.srt_by_clause,
                        font=(FN,8), bg=P["sidebar"], fg=P["label"],
                        activebackground=P["sidebar"],
-                       cursor="hand2").pack(side="left", padx=4)
-        tk.Label(sbar, text="|  ms/ký tự:",
+                       cursor="hand2").pack(side="left")
+
+        # --- Frame cho che do 1: Theo giay ---
+        _frm_time = tk.Frame(sbar, bg=P["sidebar"])
+        tk.Label(_frm_time, text="Min:",
                  font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
-        self.srt_mpc = tk.IntVar(value=60)
-        tk.Spinbox(sbar, from_=30, to=200, textvariable=self.srt_mpc,
-                   width=4, font=(FN,8), bg=P["white"], relief="flat"
+        tk.Spinbox(_frm_time, from_=3, to=60, textvariable=self.srt_min_s,
+                   width=3, font=(FN,8), bg=P["white"], relief="flat"
                    ).pack(side="left", padx=2)
-        tk.Label(sbar, text="Gap:",
+        tk.Label(_frm_time, text="Max:",
                  font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
-        self.srt_gap = tk.IntVar(value=300)
-        tk.Spinbox(sbar, from_=0, to=2000, textvariable=self.srt_gap,
-                   width=5, font=(FN,8), bg=P["white"], relief="flat"
+        tk.Spinbox(_frm_time, from_=5, to=60, textvariable=self.srt_max_s,
+                   width=3, font=(FN,8), bg=P["white"], relief="flat"
                    ).pack(side="left", padx=2)
-        tk.Label(sbar, text="ms",
-                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left")
+        tk.Label(_frm_time, text="giây",
+                 font=(FN,8), bg=P["sidebar"], fg=P["dim"]).pack(side="left", padx=2)
+
+        # Toggle hien/an frame khi chon radio
+        def _toggle_srt_mode():
+            if self.srt_mode.get() == 0:
+                _frm_time.pack_forget()
+                _frm_word.pack(side="left")
+                self.gap_var.set(400)
+            else:
+                _frm_word.pack_forget()
+                _frm_time.pack(side="left")
+                self.gap_var.set(400)
+
+        tk.Radiobutton(sbar, text="Min/Max từ",
+                       variable=self.srt_mode, value=0,
+                       command=_toggle_srt_mode,
+                       font=(FN,8), bg=P["sidebar"], fg=P["label"],
+                       activebackground=P["sidebar"],
+                       cursor="hand2").pack(side="left", padx=(0,2))
+        tk.Radiobutton(sbar, text="⏱ Theo giây",
+                       variable=self.srt_mode, value=1,
+                       command=_toggle_srt_mode,
+                       font=(FN,8), bg=P["sidebar"], fg=P["label"],
+                       activebackground=P["sidebar"],
+                       cursor="hand2").pack(side="left", padx=(0,6))
+
+        # Hien frame mac dinh (che do 0)
+        _frm_word.pack(side="left")
 
         tk.Frame(inner, bg=P["border"], height=1).pack(fill="x")
 
@@ -3123,29 +4706,12 @@ class App(tk.Tk):
         # Khong tu dong xu ly - chi xu ly khi bam nut
         pass
 
-        # Cột 2: Kịch bản đã xử lý
-        col2 = tk.Frame(main, bg=P["white"])
-        col2.pack(side="left", fill="both", expand=True, padx=2, pady=2)
-
-        h2 = tk.Frame(col2, bg=P["white"])
-        h2.pack(fill="x", padx=6, pady=(4,2))
-        tk.Label(h2, text="✅ Kịch bản đã xử lý",
-                 font=(FN,9,"bold"), bg=P["white"],
-                 fg=P["green"]).pack(side="left")
-        tk.Button(h2, text="📋",
-                  command=self._script_copy,
-                  font=(FN,8), bg=P["hover"], fg=P["label"],
-                  relief="flat", cursor="hand2", padx=4, pady=1
-                  ).pack(side="right")
-
-        self.script_out = tk.Text(col2, font=(FN,10), wrap="word",
+        # Cột 2: Kịch bản đã xử lý — ẩn khỏi layout, giữ widget để code đọc/ghi
+        _col2_hidden = tk.Frame(inner)  # không pack → không hiển thị
+        self.script_out = tk.Text(_col2_hidden, font=(FN,10), wrap="word",
                                    bg="#f8fffe", fg=P["text"],
                                    relief="flat", padx=6, pady=4,
                                    highlightthickness=0)
-        sb2 = ttk.Scrollbar(col2, command=self.script_out.yview)
-        self.script_out.configure(yscrollcommand=sb2.set)
-        sb2.pack(side="right", fill="y")
-        self.script_out.pack(fill="both", expand=True)
 
         # Cot 3: SRT - hien thi de user thay ket qua khi bam "SRT tu Goc/Nhip"
         col3 = tk.Frame(main, bg=P["white"])
@@ -3295,6 +4861,62 @@ class App(tk.Tk):
         self.script_stats.set(f"{len(txt.split())} từ | nhấn 🎬 để tạo SRT")
         self._generate_srt()
 
+    def _do_split_by_time(self, text, min_s, max_s, mpc):
+        """
+        Split text thanh SRT lines dua tren thoi gian mong muon (giay).
+        - Tinh min_ch / max_ch tu seconds * 1000 / mpc
+        - Tich luy tung TU, flush khi:
+            + Dang o cuoi cau (.!?;) VA da >= min_ch ky tu → flush chuan
+            + Them tu tiep theo se vuot max_ch → flush ep
+        - Dam bao moi dong ~ min_s .. max_s giay
+        """
+        import re as _re
+        min_ch = max(20, int(min_s * 1000 / mpc * 0.8))
+        max_ch = max(min_ch + 20, int(max_s * 1000 / mpc * 0.8))
+        _sent_end = set('.!?;')
+
+        paras = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
+        words = []
+        for para in paras:
+            words.extend(para.split())
+
+        chunks, cur, cur_ch = [], [], 0
+
+        for word in words:
+            w_ch = len(word)
+
+            if not cur:
+                cur.append(word); cur_ch = w_ch
+                continue
+
+            # Neu them word nay se qua max → flush truoc
+            if cur_ch + 1 + w_ch > max_ch:
+                chunks.append(" ".join(cur))
+                cur = [word]; cur_ch = w_ch
+                continue
+
+            # Neu dang o cuoi cau va da du min → flush
+            at_boundary = cur[-1][-1] in _sent_end if cur else False
+            if at_boundary and cur_ch >= min_ch:
+                chunks.append(" ".join(cur))
+                cur = [word]; cur_ch = w_ch
+            else:
+                cur.append(word); cur_ch += 1 + w_ch
+
+        if cur:
+            joined = " ".join(cur)
+            # Dong cuoi qua ngan → gop vao dong truoc neu duoc
+            if len(joined) < min_ch * 0.5 and chunks:
+                merged = chunks[-1] + " " + joined
+                if len(merged) <= max_ch * 1.3:
+                    chunks[-1] = merged
+                else:
+                    chunks.append(joined)
+            else:
+                chunks.append(joined)
+
+        return [c for c in chunks if c.strip()]
+
     def _generate_srt(self, use_original=False):
         """Tao SRT."""
         try:
@@ -3309,15 +4931,24 @@ class App(tk.Tk):
             if not txt:
                 messagebox.showwarning("Trống", "Chưa có nội dung để tạo SRT!")
                 return
-            lines = self._do_split(txt,
-                                   min_w=self.srt_min_w.get(),
-                                   max_w=self.srt_max_w.get(),
-                                   ovfl=4,
-                                   by_clause=self.srt_by_clause.get())
-            lines = [l for l in lines if l.strip()]
             mpc = self.srt_mpc.get()
-            gap = self.srt_gap.get()
-            srt = self._make_srt(lines, mpc, gap)
+            gap = self.gap_var.get()
+            if self.srt_mode.get() == 1:
+                lines = self._do_split_by_time(txt,
+                                               min_s=self.srt_min_s.get(),
+                                               max_s=self.srt_max_s.get(),
+                                               mpc=mpc)
+                lines = [l for l in lines if l.strip()]
+                srt = self._make_srt(lines, mpc, 0, char_only=True)
+            else:
+                _max_w = self.srt_max_w.get()
+                lines = self._do_split(txt,
+                                       min_w=self.srt_min_w.get(),
+                                       max_w=_max_w,
+                                       ovfl=max(4, _max_w // 3),
+                                       by_clause=self.srt_by_clause.get())
+                lines = [l for l in lines if l.strip()]
+                srt = self._make_srt(lines, mpc, gap)
             self.srt_out.config(state="normal")
             self.srt_out.delete("1.0", "end")
             self.srt_out.insert("1.0", srt)
@@ -3412,6 +5043,481 @@ class App(tk.Tk):
             self.srt_editor.insert("1.0", srt)
         self._switch_tab("srt")
 
+    # ─────── Tab: Ghép Video ─────────────────────────────────────────
+    def _build_ghep_tab(self, p):
+        if not HAS_GHEP:
+            tk.Label(p, text="⚠  Không tìm thấy ghep_video_core.py\nVui lòng đặt file này cùng thư mục với magicvoice.py.",
+                     bg=P["bg"], fg=P["red"], font=(FN, 11), justify="center").pack(expand=True)
+            return
+
+        root_fr = tk.Frame(p, bg=P["bg"])
+        root_fr.pack(fill="both", expand=True)
+
+        # ── Header ──
+        hdr = tk.Frame(root_fr, bg=P["purple"], pady=10)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="🎬  GHÉP VIDEO KHỚP VOICE", bg=P["purple"], fg="white",
+                 font=(FN, 14, "bold")).pack(anchor="w", padx=20)
+        tk.Label(hdr, text="Tự động co giãn mỗi video cho khớp đúng độ dài đoạn voice",
+                 bg=P["purple"], fg="#c7d2fe", font=(FN, 9)).pack(anchor="w", padx=20)
+
+        body = tk.Frame(root_fr, bg=P["bg"])
+        body.pack(fill="both", expand=True, padx=18, pady=12)
+
+        # ── Folder selectors ──
+        card = tk.Frame(body, bg=P["white"], highlightthickness=1,
+                        highlightbackground=P["border"])
+        card.pack(fill="x")
+        card.columnconfigure(1, weight=1)
+
+        self._ghep_voice_var  = tk.StringVar()
+        self._ghep_video_var  = tk.StringVar()
+        self._ghep_out_var    = tk.StringVar()
+
+        def _row(parent, r, label, var):
+            tk.Label(parent, text=label, bg=P["white"], fg=P["label"],
+                     font=(FN, 10)).grid(row=r, column=0, sticky="w", padx=14, pady=8)
+            tk.Entry(parent, textvariable=var, bg=P["sel"], fg=P["text"],
+                     relief="flat", font=(FN, 10),
+                     highlightbackground=P["border"], highlightthickness=1
+                     ).grid(row=r, column=1, sticky="ew", pady=8, ipady=4)
+            tk.Button(parent, text="Chọn…", font=(FN, 9), bg=P["purple"], fg="white",
+                      relief="flat", cursor="hand2", padx=12, pady=4,
+                      command=lambda v=var: self._ghep_pick_dir(v)
+                      ).grid(row=r, column=2, padx=12, pady=8)
+
+        _row(card, 0, "📁  Thư mục VOICE",      self._ghep_voice_var)
+        _row(card, 1, "🎞️  Thư mục VIDEO / ẢNH", self._ghep_video_var)
+
+        # Output row — ẩn khi CapCut mode ON
+        self._ghep_out_card = tk.Frame(body, bg=P["white"], highlightthickness=1,
+                                        highlightbackground=P["border"])
+        self._ghep_out_card.pack(fill="x", pady=(4, 0))
+        self._ghep_out_card.columnconfigure(1, weight=1)
+        _row(self._ghep_out_card, 0, "💾  Lưu KẾT QUẢ", self._ghep_out_var)
+
+        # ── Resolution + options ──
+        opt_fr = tk.Frame(body, bg=P["white"], highlightthickness=1,
+                          highlightbackground=P["border"])
+        opt_fr.pack(fill="x", pady=(8, 0))
+
+        tk.Label(opt_fr, text="🖼️  Khung hình", bg=P["white"], fg=P["label"],
+                 font=(FN, 10)).grid(row=0, column=0, sticky="w", padx=14, pady=8)
+        self._ghep_res_var = tk.StringVar(value=list(_ghep.RESOLUTIONS.keys())[0])
+        ttk.Combobox(opt_fr, textvariable=self._ghep_res_var,
+                     values=list(_ghep.RESOLUTIONS.keys()), state="readonly", width=32
+                     ).grid(row=0, column=1, columnspan=2, sticky="ew", padx=(0, 14), pady=8)
+        opt_fr.columnconfigure(1, weight=1)
+
+        chk_fr = tk.Frame(opt_fr, bg=P["white"])
+        chk_fr.grid(row=1, column=0, columnspan=3, sticky="w", padx=14, pady=(0, 10))
+
+        self._ghep_concat_var = tk.BooleanVar(value=True)
+        self._ghep_fade_var   = tk.BooleanVar(value=True)
+        self._ghep_kb_var     = tk.BooleanVar(value=True)
+        self._ghep_trans_var  = tk.BooleanVar(value=False)
+        self._ghep_limit_var  = tk.BooleanVar(value=False)
+
+        def _chk(parent, text, var):
+            return tk.Checkbutton(parent, text=text, variable=var,
+                                  bg=P["white"], fg=P["text"], selectcolor=P["sel"],
+                                  font=(FN, 10), activebackground=P["white"],
+                                  activeforeground=P["text"], cursor="hand2",
+                                  highlightthickness=0, bd=0)
+
+        self._ghep_concat_chk = _chk(chk_fr, "Chỉ xuất 1 video final (nối tất cả, xóa clip lẻ)", self._ghep_concat_var)
+        self._ghep_concat_chk.pack(anchor="w", pady=1)
+        _chk(chk_fr, "Chuyển cảnh mượt (mờ dần giữa các cảnh)",                          self._ghep_fade_var).pack(anchor="w", pady=1)
+        _chk(chk_fr, "Chuyển động ngẫu nhiên cho ẢNH (zoom/pan/chéo — không áp dụng cho video)", self._ghep_kb_var).pack(anchor="w", pady=1)
+        _chk(chk_fr, "Chuyển tiếp ngẫu nhiên giữa các cảnh (xfade — chỉ khi xuất final)", self._ghep_trans_var).pack(anchor="w", pady=1)
+        _chk(chk_fr, "Giới hạn tốc độ (tránh nhanh/chậm quá mức)",                      self._ghep_limit_var).pack(anchor="w", pady=1)
+
+        # ── Tên file output ──
+        self._ghep_name_fr = name_fr = tk.Frame(body, bg=P["white"], highlightthickness=1,
+                                                  highlightbackground=P["border"])
+        name_fr.pack(fill="x", pady=(8, 0))
+        name_fr.columnconfigure(1, weight=1)
+        self._ghep_name_lbl = tk.Label(name_fr, text="📝  Tên file output",
+                                        bg=P["white"], fg=P["label"], font=(FN, 10))
+        self._ghep_name_lbl.grid(row=0, column=0, sticky="w", padx=14, pady=8)
+        self._ghep_name_var = tk.StringVar(value="final")
+        tk.Entry(name_fr, textvariable=self._ghep_name_var, bg=P["sel"], fg=P["text"],
+                 relief="flat", font=(FN, 10),
+                 highlightbackground=P["border"], highlightthickness=1
+                 ).grid(row=0, column=1, sticky="ew", pady=8, ipady=4)
+        self._ghep_name_ext = tk.Label(name_fr, text=".mp4", bg=P["white"],
+                                        fg=P["sub"], font=(FN, 10))
+        self._ghep_name_ext.grid(row=0, column=2, padx=(4, 14))
+
+        # ── Gửi vào CapCut ──
+        self._ghep_autocap_var = tk.BooleanVar(value=False)
+        self._ghep_autocap_var.trace_add("write", self._ghep_toggle_mode)
+
+        ac_wrap = tk.Frame(body, bg=P["white"], highlightthickness=1,
+                           highlightbackground=P["border"])
+        ac_wrap.pack(fill="x", pady=(6, 0))
+
+        # Header row: checkbox bật/tắt
+        ac_hdr = tk.Frame(ac_wrap, bg=P["white"])
+        ac_hdr.pack(fill="x", padx=14, pady=(8, 2))
+        _chk(ac_hdr, "Gửi vào CapCut (đẩy ảnh+voice trực tiếp vào project)", self._ghep_autocap_var
+             ).pack(side="left")
+
+        # Draft folder row
+        ac_row1 = tk.Frame(ac_wrap, bg=P["white"])
+        ac_row1.pack(fill="x", padx=14, pady=2)
+        tk.Label(ac_row1, text="Thư mục CapCut Draft:", bg=P["white"], fg=P["label"],
+                 font=(FN, 9), width=22, anchor="w").pack(side="left")
+        self._ghep_draft_var = tk.StringVar()
+        tk.Entry(ac_row1, textvariable=self._ghep_draft_var,
+                 bg=P["sel"], fg=P["text"], relief="flat", font=(FN2, 9),
+                 highlightbackground=P["border"], highlightthickness=1
+                 ).pack(side="left", fill="x", expand=True, ipady=3, padx=(4, 4))
+        tk.Button(ac_row1, text="📂", font=(FN, 9), bg=P["hover"], fg=P["label"],
+                  relief="flat", cursor="hand2", padx=8, pady=2,
+                  command=lambda: (lambda d=filedialog.askdirectory():
+                                   (self._ghep_draft_var.set(d),
+                                    self._ghep_reload_projects(manual=True)) if d else None)()
+                  ).pack(side="left")
+        tk.Button(ac_row1, text="🔍 Tự dò", font=(FN, 9), bg=P["purple"], fg="white",
+                  relief="flat", cursor="hand2", padx=8, pady=2,
+                  activebackground=P["sel"], activeforeground=P["purple"],
+                  command=self._ghep_redetect_draft
+                  ).pack(side="left", padx=(4, 0))
+
+        # Hint path — hiện trạng thái tìm tự động vs thủ công + số project
+        self._ghep_draft_hint = tk.Label(ac_wrap, text="", bg=P["white"], fg=P["dim"],
+                                          font=(FN, 8), anchor="w")
+        self._ghep_draft_hint.pack(fill="x", padx=14)
+
+        # Auto-detect lần đầu (không blocking — chạy sau khi UI xong)
+        self.after(100, self._ghep_redetect_draft)
+
+        # Project dropdown row
+        ac_row2 = tk.Frame(ac_wrap, bg=P["white"])
+        ac_row2.pack(fill="x", padx=14, pady=(4, 2))
+        tk.Label(ac_row2, text="Project template:", bg=P["white"], fg=P["label"],
+                 font=(FN, 9), width=22, anchor="w").pack(side="left")
+        self._ghep_proj_var  = tk.StringVar()
+        self._ghep_proj_data = []   # [(display, folder_path)]
+        self._ghep_proj_cmb  = ttk.Combobox(ac_row2, textvariable=self._ghep_proj_var,
+                                              state="readonly", font=(FN, 9), width=34)
+        self._ghep_proj_cmb.pack(side="left", padx=(4, 4))
+        self._ghep_proj_cmb.bind("<<ComboboxSelected>>", self._ghep_on_proj_select)
+        tk.Button(ac_row2, text="🔄 Tải lại", font=(FN, 9), bg=P["blue"], fg="white",
+                  relief="flat", cursor="hand2", padx=8, pady=2,
+                  command=self._ghep_reload_projects).pack(side="left")
+
+        # Project info
+        self._ghep_proj_info = tk.Label(ac_wrap, text="", bg=P["white"], fg=P["purple"],
+                                         font=(FN, 8), anchor="w")
+        self._ghep_proj_info.pack(fill="x", padx=14, pady=(2, 4))
+
+        # (auto-detect đã được schedule ở trên tại after(100, _ghep_redetect_draft))
+
+        # ── Start/Stop buttons + progress ──
+        _ghep_btn_fr = tk.Frame(body, bg=P["white"])
+        _ghep_btn_fr.pack(fill="x", pady=(10, 4))
+        self._ghep_run_btn = tk.Button(
+            _ghep_btn_fr, text="▶  BẮT ĐẦU GHÉP", font=(FN, 11, "bold"),
+            bg=P["purple"], fg="white", activebackground=P["purple2"],
+            activeforeground="white", relief="flat", cursor="hand2",
+            padx=20, pady=10, command=self._ghep_start,
+        )
+        self._ghep_run_btn.pack(side="left", fill="x", expand=True)
+        self._ghep_stop_btn = tk.Button(
+            _ghep_btn_fr, text="■  DỪNG", font=(FN, 11, "bold"),
+            bg="#c62828", fg="white", activebackground="#b71c1c",
+            activeforeground="white", relief="flat", cursor="hand2",
+            padx=16, pady=10, command=self._ghep_stop,
+        )
+        self._ghep_stop_btn.pack(side="right", padx=(6, 0))
+        self._ghep_stop_btn.pack_forget()   # ẩn khi chưa chạy
+
+        self._ghep_prog = ttk.Progressbar(body, mode="determinate")
+        self._ghep_prog.pack(fill="x", pady=(0, 6))
+
+        tk.Label(body, text="NHẬT KÝ", bg=P["bg"], fg=P["sub"],
+                 font=(FN, 9, "bold")).pack(anchor="w")
+        self._ghep_log = scrolledtext.ScrolledText(
+            body, height=9, font=("Consolas", 9), bg=P["sel"],
+            fg=P["text"], relief="flat", bd=0,
+            highlightbackground=P["border"], highlightthickness=1,
+        )
+        self._ghep_log.pack(fill="both", expand=True, pady=(2, 0))
+        self._ghep_log_append("Sẵn sàng. Chọn thư mục Voice + Video rồi bấm BẮT ĐẦU GHÉP.")
+
+    def _ghep_toggle_mode(self, *_):
+        """Làm mờ/khôi phục các tùy chọn không dùng ở mode hiện tại; đổi label tên field."""
+        is_cap = self._ghep_autocap_var.get()
+        state  = "disabled" if is_cap else "normal"
+
+        def _set_state(w):
+            try:
+                w.config(state=state)
+            except Exception:
+                pass
+            for child in w.winfo_children():
+                _set_state(child)
+
+        _set_state(self._ghep_out_card)
+        self._ghep_concat_chk.config(state=state)
+
+        # Đổi label và ẩn/hiện đuôi .mp4 theo mode
+        if is_cap:
+            self._ghep_name_lbl.config(text="📝  Tên project mới")
+            self._ghep_name_ext.grid_remove()
+        else:
+            self._ghep_name_lbl.config(text="📝  Tên file output")
+            self._ghep_name_ext.grid()
+
+    def _ghep_process_capcut(self, voice_dir, video_dir):
+        """Headless: đẩy ảnh+voice vào CapCut project mà không mở GUI."""
+        import traceback
+        try:
+            idx = self._ghep_proj_cmb.current()
+            if idx < 0 or idx >= len(self._ghep_proj_data):
+                self.after(0, lambda: messagebox.showerror(
+                    "Lỗi", "Chọn project template trước!"))
+                return
+            _, template_path = self._ghep_proj_data[idx]
+            draft    = self._ghep_draft_var.get().strip()
+            new_name = self._ghep_name_var.get().strip() or "project_moi"
+
+            def _log(msg):
+                self._ghep_log_append(msg)
+            def _prog(v):
+                self.after(0, lambda v=v: self._ghep_set_progress(v))
+            def _on_start(total):
+                self.after(0, lambda: self._ghep_prog.config(maximum=total, value=0))
+
+            self._ghep_log_append(
+                f"Tạo project '{new_name}' từ template: {os.path.basename(template_path)}")
+            folder, n, mins, secs = _ghep.push_to_capcut(
+                video_dir, voice_dir, template_path, draft,
+                new_name, False, _log, _prog, on_start=_on_start,
+            )
+            msg = (f"✅ Tạo project '{new_name}' thành công!\n"
+                   f"{n} cặp ảnh+voice  |  {mins}p {secs}s\n\n"
+                   f"Tắt CapCut → Mở lại → Project xuất hiện đầu danh sách ✓")
+            self._ghep_log_append(f"✅ Hoàn tất! {n} cặp, {mins}p {secs}s")
+            self.after(0, lambda: messagebox.showinfo("Thành công", msg))
+        except Exception as e:
+            err = str(e)
+            self._ghep_log_append(f"❌ Lỗi: {err}\n{traceback.format_exc()}")
+            self.after(0, lambda err=err: messagebox.showerror("Lỗi CapCut", err))
+        finally:
+            self.after(0, lambda: self._ghep_run_btn.config(
+                state="normal", text="▶  BẮT ĐẦU GHÉP"))
+
+    def _ghep_launch_capcut(self, voice_dir, video_dir):
+        """(Legacy) Mở capcut_clone.py với pre-fill khi CapCut mode."""
+        idx = self._ghep_proj_cmb.current()
+        project_path = ""
+        if 0 <= idx < len(self._ghep_proj_data):
+            _, project_path = self._ghep_proj_data[idx]
+        draft = self._ghep_draft_var.get().strip()
+
+        self._ghep_log_append(f"Đang mở CapCut Clone Tool...")
+        self._ghep_log_append(f"  📁 Ảnh/Video: {video_dir}")
+        self._ghep_log_append(f"  🎵 Voice:     {voice_dir}")
+        if project_path:
+            self._ghep_log_append(f"  🎬 Template:  {os.path.basename(project_path)}")
+
+        ok, info = _ghep.launch_capcut_prefilled(video_dir, voice_dir, draft, project_path)
+        if ok:
+            self._ghep_log_append("✔  capcut_clone.py đã mở — hãy kiểm tra và bấm Tạo Project.")
+        else:
+            self._ghep_log_append(f"⚠  Không mở được: {info}")
+            self.after(0, lambda: messagebox.showerror("Lỗi", f"Không mở được capcut_clone.py:\n{info}"))
+
+    def _ghep_redetect_draft(self):
+        """Chạy lại auto-detect CapCut draft folder — cập nhật ô path + hint."""
+        if not HAS_GHEP:
+            return
+        try:
+            self._ghep_draft_hint.config(text="  🔍 Đang tìm thư mục CapCut Draft...", fg=P["dim"])
+            self.update_idletasks()
+            found = _ghep.detect_capcut_draft()
+        except Exception as _e:
+            self._ghep_draft_hint.config(text=f"  ❌ Lỗi tìm: {_e}", fg=P["red"])
+            return
+        if found:
+            self._ghep_draft_var.set(found)
+            self._ghep_reload_projects(auto_detected=True)
+        else:
+            self._ghep_draft_hint.config(
+                text="  ⚠ Không tìm thấy tự động — hãy bấm 📂 để trỏ thủ công",
+                fg=P["gold"])
+
+    def _ghep_reload_projects(self, manual=False, auto_detected=False):
+        if not HAS_GHEP:
+            return
+        draft = self._ghep_draft_var.get().strip()
+        projects = _ghep.list_capcut_projects(draft) if draft else []
+        self._ghep_proj_data = projects
+        names = [d for d, _ in projects]
+        self._ghep_proj_cmb.config(values=names)
+        if names:
+            self._ghep_proj_cmb.current(0)
+            self._ghep_on_proj_select()
+            _src = "tự động" if auto_detected else ("thủ công" if manual else "")
+            _src_txt = f"  [{_src}]" if _src else ""
+            _short = draft[:55] + "…" if len(draft) > 55 else draft
+            self._ghep_draft_hint.config(
+                text=f"  ✅ {_short}{_src_txt}  •  {len(names)} project",
+                fg=P["green"])
+        else:
+            self._ghep_proj_var.set("")
+            self._ghep_proj_info.config(text="(Không tìm thấy project — kiểm tra thư mục Draft)")
+            if draft:
+                _short = draft[:55] + "…" if len(draft) > 55 else draft
+                self._ghep_draft_hint.config(
+                    text=f"  ⚠ {_short}  •  0 project — thư mục có thể sai",
+                    fg=P["gold"])
+
+    def _ghep_on_proj_select(self, _event=None):
+        idx = self._ghep_proj_cmb.current()
+        if idx < 0 or idx >= len(self._ghep_proj_data):
+            self._ghep_proj_info.config(text="")
+            return
+        display, folder = self._ghep_proj_data[idx]
+        self._ghep_proj_info.config(text=f"  📁 {folder}")
+
+    def _ghep_pick_dir(self, var):
+        d = filedialog.askdirectory()
+        if d:
+            var.set(d)
+
+    def _ghep_log_append(self, msg):
+        def _do():
+            self._ghep_log.insert("end", msg + "\n")
+            self._ghep_log.see("end")
+        self.after(0, _do)
+
+    def _ghep_set_progress(self, done, total=None):
+        def _do():
+            if total is not None:
+                self._ghep_prog["maximum"] = total
+            self._ghep_prog["value"] = done
+        self.after(0, _do)
+
+    def _ghep_start(self):
+        if not HAS_GHEP:
+            return
+        voice_dir = self._ghep_voice_var.get().strip()
+        video_dir = self._ghep_video_var.get().strip()
+        if not voice_dir or not video_dir:
+            messagebox.showwarning("Thiếu thư mục", "Chọn thư mục Voice và Video trước nhé.")
+            return
+
+        self._ghep_run_btn.config(state="disabled", text="⏳  ĐANG XỬ LÝ...")
+        self._ghep_stop_btn.pack(side="right", padx=(6, 0))
+        self._ghep_log.delete("1.0", "end")
+        self._ghep_set_progress(0)
+        self._ghep_cancel_ev = threading.Event()
+
+        # CapCut mode: đẩy headless vào CapCut project, không ffmpeg
+        if self._ghep_autocap_var.get():
+            threading.Thread(
+                target=self._ghep_process_capcut,
+                args=(voice_dir, video_dir),
+                daemon=True,
+            ).start()
+            return
+
+        # Mode thường: ghép video → lưu file
+        out_dir = self._ghep_out_var.get().strip()
+        if not out_dir:
+            out_dir = os.path.join(os.path.dirname(video_dir) or ".", "output")
+            self._ghep_out_var.set(out_dir)
+        threading.Thread(target=self._ghep_process,
+                         args=(voice_dir, video_dir, out_dir), daemon=False).start()
+
+    def _ghep_stop(self):
+        ev = getattr(self, "_ghep_cancel_ev", None)
+        if ev:
+            ev.set()
+        self._ghep_stop_btn.config(state="disabled", text="⏳  Đang dừng...")
+
+    def _ghep_process(self, voice_dir, video_dir, out_dir):
+        import traceback
+        try:
+            if not _ghep.resolve_tools():
+                self._ghep_log_append("ffmpeg chưa có → đang tự cài (khoảng 80 MB)...")
+                ok = _ghep.install_ffmpeg(self._ghep_log_append, self._ghep_set_progress)
+                if not ok:
+                    self.after(0, lambda: messagebox.showerror(
+                        "Lỗi ffmpeg",
+                        "Không tải được ffmpeg tự động.\n"
+                        "Kiểm tra mạng hoặc cài thủ công: winget install ffmpeg"))
+                    return
+                self._ghep_set_progress(0)
+
+            voices = _ghep.list_media(voice_dir, _ghep.VOICE_EXTS)
+            videos, _n_vid_rep = _ghep.list_media_video_priority(video_dir)
+            if _n_vid_rep:
+                self._ghep_log_append(
+                    f"🎬 Ưu tiên video: {_n_vid_rep} ảnh bị thay bằng video cùng tên")
+            if not voices or not videos:
+                self._ghep_log_append(f"Không tìm thấy file. voice={len(voices)}, video={len(videos)}")
+                return
+            # Bù thiếu media: nếu media ít hơn voice → lặp lại media cuối để ghép đủ
+            if len(videos) < len(voices):
+                _n_pad = len(voices) - len(videos)
+                self._ghep_log_append(
+                    f"⚠ Thiếu {_n_pad} media → bù bằng: {os.path.basename(videos[-1])}")
+                videos = list(videos) + [videos[-1]] * _n_pad
+            n = min(len(voices), len(videos))
+            if len(videos) > len(voices):
+                self._ghep_log_append(f"⚠  Thừa media: {len(videos)} media / {len(voices)} voice. Xử lý {n} cặp đầu.")
+
+            w, h        = _ghep.RESOLUTIONS[self._ghep_res_var.get()]
+            limit       = self._ghep_limit_var.get()
+            fade        = self._ghep_fade_var.get()
+            kenburns    = self._ghep_kb_var.get()
+            trans       = self._ghep_trans_var.get()
+            only_final  = self._ghep_concat_var.get()
+            final_name  = (self._ghep_name_var.get().strip() or "final")
+
+            os.makedirs(out_dir, exist_ok=True)
+            self._ghep_log_append(f"Bắt đầu xử lý {n} cặp...\n" + "─" * 52)
+
+            final_path, n_loi = _ghep.process_pairs(
+                voices, videos, out_dir,
+                w, h, limit, fade, kenburns, only_final,
+                self._ghep_log_append, self._ghep_set_progress,
+                final_name=final_name, transitions=trans,
+                cancel_ev=getattr(self, "_ghep_cancel_ev", None),
+            )
+
+            self._ghep_log_append("─" * 52)
+            if n_loi:
+                self._ghep_log_append(f"⚠  Có {n_loi} cặp lỗi đã bỏ qua.")
+            if final_path:
+                dur = _ghep.get_duration(final_path)
+                self._ghep_log_append(f"✔  Video hoàn chỉnh ({dur:.2f}s):\n   {final_path}")
+            elif not only_final:
+                self._ghep_log_append(f"✔  Clip lẻ đã lưu vào:\n   {out_dir}")
+            else:
+                self._ghep_log_append("[LỖI] Không có clip nào hợp lệ.")
+                self.after(0, lambda: messagebox.showerror(
+                    "Lỗi", "Tất cả cặp đều lỗi. Kiểm tra lại file voice/video."))
+                return
+            self._ghep_log_append("\n═══  HOÀN TẤT  ═══")
+            self.after(0, lambda: messagebox.showinfo("Xong", "Đã ghép xong!"))
+        except Exception as e:
+            self._ghep_log_append(f"\n[LỖI] {e}")
+            tb = traceback.format_exc()
+            self._ghep_log_append(tb[-600:])
+            self.after(0, lambda err=str(e): messagebox.showerror("Lỗi", err))
+        finally:
+            def _reset_ghep_btn():
+                self._ghep_run_btn.config(state="normal", text="▶  BẮT ĐẦU GHÉP")
+                self._ghep_stop_btn.pack_forget()
+                self._ghep_stop_btn.config(state="normal", text="■  DỪNG")
+            self.after(0, _reset_ghep_btn)
+
     def _script_send_and_read(self):
         txt = self.script_out.get("1.0","end-1c").strip()
         srt = self.srt_out.get("1.0","end-1c").strip()
@@ -3468,7 +5574,7 @@ class App(tk.Tk):
         inner=tk.Frame(p,bg=P["bg"])
         inner.pack(fill="both",expand=True,padx=14,pady=10)
 
-        # Header
+        # Header (full width)
         hdr=tk.Frame(inner,bg=P["bg"]); hdr.pack(fill="x",pady=(0,10))
         tk.Label(hdr,text="🎤  Thư Viện Voice Clone",
                  font=(FN,13,"bold"),bg=P["bg"],fg=P["text"]).pack(side="left")
@@ -3481,8 +5587,25 @@ class App(tk.Tk):
                   relief="flat",cursor="hand2",padx=12,pady=5
                   ).pack(side="right")
 
-        # Search
-        sf=tk.Frame(inner,bg=P["bg"],
+        # Main horizontal split: LEFT (voice list) + RIGHT (guide)
+        main=tk.Frame(inner,bg=P["bg"])
+        main.pack(fill="both",expand=True)
+
+        # LEFT — voice list panel (fixed 360px wide)
+        left=tk.Frame(main,bg=P["bg"],width=360)
+        left.pack(side="left",fill="y")
+        left.pack_propagate(False)
+
+        # Separator
+        tk.Frame(main,bg=P["border"],width=1).pack(side="left",fill="y",padx=(0,10))
+
+        # RIGHT — guide panel (fills remaining space)
+        right=tk.Frame(main,bg=P["bg"])
+        right.pack(side="left",fill="both",expand=True)
+        self._build_clone_guide(right)
+
+        # Search (inside left)
+        sf=tk.Frame(left,bg=P["bg"],
                     highlightthickness=1,highlightbackground=P["border"])
         sf.pack(fill="x",pady=(0,8))
         tk.Label(sf,text="🔍",bg=P["white"],fg=P["dim"],font=(FN,11),padx=6).pack(side="left")
@@ -3493,8 +5616,8 @@ class App(tk.Tk):
                  insertbackground=P["purple"],
                  highlightthickness=0).pack(side="left",fill="x",expand=True,ipady=6)
 
-        # Voice cards grid
-        self.voice_scroll_frame=tk.Frame(inner,bg=P["bg"])
+        # Voice cards grid (inside left)
+        self.voice_scroll_frame=tk.Frame(left,bg=P["bg"])
         self.voice_scroll_frame.pack(fill="both",expand=True)
 
         canvas=tk.Canvas(self.voice_scroll_frame,bg=P["bg"],highlightthickness=0)
@@ -3508,8 +5631,8 @@ class App(tk.Tk):
         self.voices_inner.bind("<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        # Bottom action bar
-        act=tk.Frame(inner,bg=P["bg"],pady=4)
+        # Bottom action bar (inside left)
+        act=tk.Frame(left,bg=P["bg"],pady=4)
         act.pack(fill="x")
         for txt,cmd in [("✏️ Sửa",self._edit_voice),
                         ("🗑 Xóa",self._del_voice)]:
@@ -3538,8 +5661,8 @@ class App(tk.Tk):
 
         # Top row
         top=tk.Frame(body,bg=bg); top.pack(fill="x")
-        mode_color={"clone":P["purple"],"design":P["blue"],"auto":P["gold"]}
-        mode_icon={"clone":"🎯","design":"✨","auto":"🎲"}
+        mode_color={"clone":P["purple"],"design":P["blue"]}
+        mode_icon={"clone":"🎯","design":"✨"}
         tk.Label(top,text=mode_icon.get(vp.mode,"●"),font=("",14),
                  bg=bg).pack(side="left",padx=(0,6))
         tk.Label(top,text=vp.name,font=(FN,11,"bold"),
@@ -3603,9 +5726,104 @@ class App(tk.Tk):
             tk.Label(self.voices_inner,text="Chưa có voice nào\nNhấn '+ Thêm Voice Mới' để bắt đầu",
                      font=(FN,10),bg=P["bg"],fg=P["dim"],justify="center").pack(pady=40)
 
+    def _build_clone_guide(self, parent):
+        """Huong dan - hien thi ben phai danh sach voice (panel doc lap)."""
+        guide=tk.Frame(parent,bg="#eef2ff",
+                       highlightthickness=1,highlightbackground="#c7d2fe")
+        guide.pack(fill="both",expand=True)
+
+        # Wrapper canh giua theo chieu doc
+        wrap=tk.Frame(guide,bg="#eef2ff")
+        wrap.pack(expand=True)
+
+        # Arrow + header
+        hdr=tk.Frame(wrap,bg="#eef2ff")
+        hdr.pack(pady=(24,8))
+        tk.Label(hdr,text="↑",font=(FN,20,"bold"),
+                 bg="#eef2ff",fg=P["purple"]).pack(side="left",padx=(0,8))
+        tk.Label(hdr,text='Nhấn  "+ Thêm Voice Mới"  để thêm giọng clone',
+                 font=(FN,10,"bold"),bg="#eef2ff",fg=P["purple"]).pack(side="left")
+
+        tk.Frame(wrap,bg="#c7d2fe",height=1).pack(fill="x",padx=16,pady=(0,10))
+
+        tk.Label(wrap,
+                 text="📋  Cách chuẩn bị file audio để clone giọng tốt nhất:",
+                 font=(FN,9,"bold"),bg="#eef2ff",fg=P["text"],
+                 anchor="w").pack(fill="x",padx=16,pady=(0,6))
+
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): them dong canh bao MAU
+        # DO, TO, noi bat - khach thuong lam theo thoi quen KHONG doc huong
+        # dan ben duoi, hay dua nguyen ca doan dai vuot qua 30s vao lam file
+        # mau clone gay loi. Dat NGAY DUOI tieu de, truoc khi vao 5 buoc, de
+        # dap vao mat truoc tien.
+        tk.Label(wrap,
+                 text="⚠️  BẮT BUỘC: File audio mẫu chỉ ĐÚNG 10–30 GIÂY —"
+                      " tuyệt đối KHÔNG đưa cả đoạn dài vào, dễ gây lỗi!",
+                 font=(FN,10,"bold"),bg="#eef2ff",fg="#dc2626",
+                 anchor="w",justify="left",wraplength=420
+                 ).pack(fill="x",padx=16,pady=(0,10))
+
+        steps=[
+            ("1","Lấy đoạn video/audio chứa giọng cần clone"),
+            ("2","Đưa vào CapCut → bỏ phần đầu lộn xộn, chỉ giữ 10–30 giây rõ nhất"),
+            ("3",'Tách giọng nói: chuột phải clip → "Tách giọng nói" → chọn "Giữ lời"'
+                 ' → lọc sạch nhạc nền và tạp âm'),
+            ("4","Cắt đầu / cuối tại điểm lặng — tránh bắt đầu hoặc kết thúc đột ngột"),
+            ("5","Xuất WAV hoặc MP3 → chọn làm File audio mẫu khi nhấn Thêm Voice Mới"),
+        ]
+
+        body=tk.Frame(wrap,bg="#eef2ff")
+        body.pack(fill="x",padx=16,pady=(0,24))
+
+        for num,text in steps:
+            row=tk.Frame(body,bg="#eef2ff")
+            row.pack(fill="x",pady=3)
+            tk.Label(row,text=num,font=(FN,9,"bold"),
+                     bg=P["purple"],fg="white",
+                     width=2,pady=3).pack(side="left",padx=(0,10))
+            tk.Label(row,text=text,font=(FN,9),
+                     bg="#eef2ff",fg=P["text"],
+                     anchor="w",justify="left",wraplength=400
+                     ).pack(side="left",fill="x",expand=True)
+
     def _browse_voices(self):
-        """Mở dialog duyệt 600+ giọng Voice Design"""
-        def on_select(instruct):
+        """Mở dialog duyệt 600+ giọng Voice Design + giọng thật Edge TTS"""
+        def on_select(result):
+            # FIX v3.65 (5): danh muc Edge TTS tra ve dict (khac voi string
+            # instruct cua Voice Design) - luu truc tiep VoiceProfile mode=
+            # "edge" giong het _save_edge_preset(), khong qua VoiceDialog vi
+            # Edge khong co khai niem "instruct" tu do.
+            if isinstance(result, dict) and result.get("mode") == "edge":
+                from tkinter import simpledialog as _sd
+                lang = result.get("lang", "")
+                default_name = f"{result['name']} ({lang.split()[-1] if lang else ''})"
+                new_name = _sd.askstring("Đặt tên giọng",
+                    "Tên hiển thị cho giọng này:",
+                    initialvalue=default_name, parent=self)
+                if not new_name:
+                    return
+                import time as _time
+                vp = VoiceProfile(
+                    name=new_name,
+                    mode="edge",
+                    ref_audio=result["code"],
+                    ref_text=result.get("desc", ""),
+                    instruct=f"edge:{result['code']}",
+                    speed=result.get("speed", 1.0),
+                    volume=result.get("volume", 1.0),
+                    pitch=result.get("pitch", 1.0),
+                    note=f"{result.get('gender','')} · {result.get('desc','')}",
+                    created=_time.strftime("%Y-%m-%d %H:%M"),
+                )
+                self.lib.add(vp)
+                self.sel_idx = len(self.lib.profiles) - 1
+                self._refresh_voices()
+                self._update_sidebar()
+                self._refresh_srt_voices()
+                self._log(f"✅ Thêm voice Edge: {vp.name}", "ok")
+                return
+
+            instruct = result
             """Mo VoiceDialog de dat ten va luu voice."""
             vdlg = VoiceDialog(self)
             vdlg.mode_var.set("design")
@@ -3664,15 +5882,15 @@ class App(tk.Tk):
         self.tts_mode=tk.StringVar(value="omnivoice")
         m_row=tk.Frame(parent,bg=P["white"]); m_row.pack(fill="x",padx=12,pady=(0,6))
         self._mode_btns_sb={}
-        for val,lbl in [("omnivoice","MagicVoice"),("edge","Edge TTS")]:
+        for val,lbl in [("omnivoice","MagicVoice"),("edge","Edge TTS"),("fast","MG Nhanh")]:
             is_sel = val == "omnivoice"
             b=tk.Button(m_row,text=lbl,command=lambda v=val:self._set_tts_mode(v),
                         font=(FN,9,"bold" if is_sel else "normal"),
-                        relief="flat",cursor="hand2",padx=16,pady=6,
+                        relief="flat",cursor="hand2",padx=16,pady=7,
                         bg=P["purple"] if is_sel else P["bg"],
                         fg="white" if is_sel else P["sub"],
                         bd=0, highlightthickness=0,
-                        activebackground=P["purple2"],activeforeground="white")
+                        activebackground="#3b60e0",activeforeground="white")
             b.pack(side="left",padx=(0,3))
             self._mode_btns_sb[val]=b
 
@@ -3702,6 +5920,46 @@ class App(tk.Tk):
         # Ẩn/hiện theo mode
         self.edge_cb.bind("<<ComboboxSelected>>", _on_ev)
 
+        # FIX v3.68 (tinh nang moi, theo yeu cau anh Bac): danh sach giong
+        # "MG Nhanh" - LUC DAU dung dropdown ttk.Combobox nho, nhung anh Bac
+        # yeu cau (2026-07-25) hien LUON danh sach day du co thanh cuon,
+        # thay han vao cho khung "Cai Dat San" (dang trong rong o mode nay)
+        # thay vi phai bam moi thay. Doi sang tk.Listbox + Scrollbar, cung
+        # vi tri/kich thuoc voi khung "Cai Dat San (Voices)".
+        self._fast_voices = FAST_VOICES_LIST
+        self.fast_voice_var = tk.StringVar(value=FAST_VOICES_LIST[0][0])
+        self.fast_voice_display = tk.StringVar(value=FAST_VOICES_LIST[0][1])
+        self.fast_frame = tk.Frame(parent, bg=P["white"])
+        tk.Label(self.fast_frame, text=f"⚡ Chọn giọng MG Nhanh ({len(FAST_VOICES_LIST)} giọng):",
+                 font=(FN,8,"bold"), bg=P["white"], fg="#0369a1").pack(anchor="w", padx=10, pady=(4,2))
+        _flb_container = tk.Frame(self.fast_frame, bg=P["white"],
+                                   highlightthickness=1, highlightbackground=P["border"])
+        _flb_container.pack(fill="both", expand=True, padx=10, pady=(0,6))
+        _flb_sb = tk.Scrollbar(_flb_container, orient="vertical")
+        _flb_sb.pack(side="right", fill="y")
+        self.fast_listbox = tk.Listbox(_flb_container, yscrollcommand=_flb_sb.set,
+                                        font=(FN,9), relief="flat", height=15,
+                                        activestyle="none", bg=P["white"], fg=P["text"],
+                                        selectbackground=P["purple"], selectforeground="white",
+                                        highlightthickness=0, exportselection=False)
+        self.fast_listbox.pack(side="left", fill="both", expand=True)
+        _flb_sb.config(command=self.fast_listbox.yview)
+        for _v_id, _v_lbl in FAST_VOICES_LIST:
+            self.fast_listbox.insert("end", f"  {_v_lbl}")
+        self.fast_listbox.selection_set(0)
+        # Giu lai fast_cb (an, khong pack) de tuong thich code cu con tham chieu
+        self.fast_cb = ttk.Combobox(self.fast_frame, textvariable=self.fast_voice_display,
+                                     values=[v[1] for v in FAST_VOICES_LIST], state="readonly")
+        def _on_fast_list_select(e=None):
+            sel = self.fast_listbox.curselection()
+            if not sel: return
+            idx = sel[0]
+            self.fast_voice_var.set(FAST_VOICES_LIST[idx][0])
+            self.fast_voice_display.set(FAST_VOICES_LIST[idx][1])
+            try: self.fast_cb.current(idx)
+            except Exception: pass
+            self._set_tts_mode("fast")
+        self.fast_listbox.bind("<<ListboxSelect>>", _on_fast_list_select)
 
         # Voice label ẩn - vẫn giữ để không lỗi code tham chiếu
         self.cur_voice_lbl = tk.Label(parent, bg=P["white"])
@@ -3781,7 +6039,9 @@ class App(tk.Tk):
         # ── Thư Mục Lưu đã có trong các tab content, không hiện lại ở sidebar ──
         # Đảm bảo trạng thái ban đầu đúng: ẩn Edge design frame
         self.after(100, lambda: self._set_tts_mode("omnivoice"))
-        tk.Frame(parent,bg=P["border"],height=1).pack(fill="x",padx=10,pady=6)
+        # Luu reference separator de _show_preset_after_edge_save co the pack dung vi tri
+        self._sb_edge_sep = tk.Frame(parent, bg=P["border"], height=1)
+        self._sb_edge_sep.pack(fill="x", padx=10, pady=6)
 
         # ── Section: Thiết Kế Giọng Edge ── (ẩn mặc định, chỉ hiện khi chọn Edge TTS)
         self._edge_design_frame = tk.Frame(parent, bg=P["white"])
@@ -3790,16 +6050,34 @@ class App(tk.Tk):
         self._sb_section(_ep,"🎙 Thiết Kế Giọng Edge TTS")
 
         # Danh sách giọng Edge theo ngôn ngữ
+        # FIX v3.65 (2): danh sach lay TRUC TIEP tu `edge-tts --list-voices`
+        # (dung ban cai tren may dev, chinh la thu vien app dang dung) de dam
+        # bao MOI ma giong (ShortName) deu con ton tai that su tren Microsoft.
+        # Phat hien va xoa cac giong da bi Microsoft KHAI TU (chon vao se loi,
+        # khong tao duoc audio): en-AU CarlyNeural/DarrenNeural/WilliamNeural
+        # (ban thuong), zh-CN XiaochenNeural, va cac giong "Monica/Sara/Nancy/
+        # Amber/Ashley/Tony/Davis/Jason" o en-US (khong con trong danh sach
+        # that). Dong thoi bo sung nhieu giong moi Microsoft da them (cac
+        # giong "Multilingual", them giong HK/TW/An Do/Chau Au...).
         EDGE_FULL = {
             "🇺🇸 English (US)": [
-                ("en-US-AriaNeural",   "Aria",   "Nữ", "Tự nhiên, trẻ trung"),
-                ("en-US-JennyNeural",  "Jenny",  "Nữ", "Rõ ràng, chuyên nghiệp"),
-                ("en-US-EmmaNeural",   "Emma",   "Nữ", "Trẻ, năng động"),
-                ("en-US-MichelleNeural","Michelle","Nữ","Ấm áp, thân thiện"),
-                ("en-US-AndrewNeural", "Andrew", "Nam","Ấm, tự nhiên"),
-                ("en-US-GuyNeural",    "Guy",    "Nam","Trầm, mạnh mẽ"),
-                ("en-US-ChristopherNeural","Christopher","Nam","Chắc chắn"),
-                ("en-US-EricNeural",   "Eric",   "Nam","Trung tính, rõ"),
+                ("en-US-AriaNeural",              "Aria",             "Nữ", "Tự nhiên, tích cực"),
+                ("en-US-AnaNeural",                "Ana",              "Nữ", "Trẻ em"),
+                ("en-US-AvaNeural",                "Ava",              "Nữ", "Biểu cảm, thân thiện"),
+                ("en-US-AvaMultilingualNeural",    "Ava (Đa ngôn ngữ)","Nữ", "Biểu cảm, đa ngôn ngữ"),
+                ("en-US-EmmaNeural",               "Emma",             "Nữ", "Vui vẻ, rõ ràng"),
+                ("en-US-EmmaMultilingualNeural",   "Emma (Đa ngôn ngữ)","Nữ","Vui vẻ, đa ngôn ngữ"),
+                ("en-US-JennyNeural",              "Jenny",            "Nữ", "Thân thiện, chu đáo"),
+                ("en-US-MichelleNeural",           "Michelle",         "Nữ", "Thân thiện, dễ chịu"),
+                ("en-US-AndrewNeural",              "Andrew",              "Nam","Ấm, tự nhiên"),
+                ("en-US-AndrewMultilingualNeural",  "Andrew (Đa ngôn ngữ)","Nam","Ấm, đa ngôn ngữ"),
+                ("en-US-BrianNeural",                "Brian",              "Nam","Gần gũi, chân thành"),
+                ("en-US-BrianMultilingualNeural",    "Brian (Đa ngôn ngữ)","Nam","Gần gũi, đa ngôn ngữ"),
+                ("en-US-ChristopherNeural",          "Christopher",        "Nam","Đáng tin cậy"),
+                ("en-US-EricNeural",                 "Eric",               "Nam","Lý trí, rõ ràng"),
+                ("en-US-GuyNeural",                  "Guy",                "Nam","Nhiệt huyết"),
+                ("en-US-RogerNeural",                "Roger",              "Nam","Sôi nổi"),
+                ("en-US-SteffanNeural",              "Steffan",            "Nam","Lý trí, kể chuyện"),
             ],
             "🇬🇧 English (UK)": [
                 ("en-GB-SoniaNeural",  "Sonia",  "Nữ", "Anh chuẩn, thanh lịch"),
@@ -3809,10 +6087,21 @@ class App(tk.Tk):
                 ("en-GB-ThomasNeural", "Thomas", "Nam","Trang trọng"),
             ],
             "🇦🇺 English (AU)": [
-                ("en-AU-NatashaNeural","Natasha","Nữ","Úc tự nhiên"),
-                ("en-AU-CarlyNeural",  "Carly",  "Nữ","Vui vẻ"),
-                ("en-AU-WilliamNeural","William","Nam","Úc trầm ấm"),
-                ("en-AU-DarrenNeural", "Darren", "Nam","Mạnh mẽ"),
+                ("en-AU-NatashaNeural",             "Natasha",             "Nữ", "Úc tự nhiên"),
+                ("en-AU-WilliamMultilingualNeural", "William (Đa ngôn ngữ)","Nam","Úc trầm ấm, đa ngôn ngữ"),
+            ],
+            "🇨🇦 English (CA)": [
+                ("en-CA-ClaraNeural", "Clara", "Nữ", "Canada"),
+                ("en-CA-LiamNeural",  "Liam",  "Nam","Canada"),
+            ],
+            "🇮🇪 English (IE)": [
+                ("en-IE-EmilyNeural",  "Emily",  "Nữ", "Ireland"),
+                ("en-IE-ConnorNeural", "Connor", "Nam","Ireland"),
+            ],
+            "🇮🇳 English (IN)": [
+                ("en-IN-NeerjaNeural",           "Neerja",             "Nữ", "Ấn Độ, chuẩn"),
+                ("en-IN-NeerjaExpressiveNeural", "Neerja (Biểu cảm)",  "Nữ", "Ấn Độ, biểu cảm"),
+                ("en-IN-PrabhatNeural",          "Prabhat",            "Nam","Ấn Độ"),
             ],
             "🇻🇳 Tiếng Việt": [
                 ("vi-VN-HoaiMyNeural", "Hoài My","Nữ","Miền Bắc, chuẩn"),
@@ -3823,12 +6112,74 @@ class App(tk.Tk):
                 ("ja-JP-KeitaNeural",  "Keita",  "Nam","Nhật trầm"),
             ],
             "🇰🇷 Korean": [
-                ("ko-KR-SunHiNeural",  "SunHi",  "Nữ","Hàn tự nhiên"),
-                ("ko-KR-InJoonNeural", "InJoon", "Nam","Hàn trầm"),
+                ("ko-KR-SunHiNeural",              "SunHi",                "Nữ", "Hàn tự nhiên"),
+                ("ko-KR-InJoonNeural",             "InJoon",               "Nam","Hàn trầm"),
+                ("ko-KR-HyunsuMultilingualNeural", "Hyunsu (Đa ngôn ngữ)", "Nam","Hàn, đa ngôn ngữ"),
             ],
-            "🇨🇳 Chinese": [
-                ("zh-CN-XiaoxiaoNeural","Xiaoxiao","Nữ","Phổ thông, ấm"),
-                ("zh-CN-YunyangNeural","Yunyang","Nam","Phổ thông, rõ"),
+            "🇨🇳 Chinese (CN)": [
+                ("zh-CN-XiaoxiaoNeural",  "Xiaoxiao",  "Nữ", "Phổ thông, ấm"),
+                ("zh-CN-XiaoyiNeural",    "Xiaoyi",    "Nữ", "Trẻ, hoạt bát"),
+                ("zh-CN-YunxiNeural",     "Yunxi",     "Nam","Trẻ, tươi sáng"),
+                ("zh-CN-YunxiaNeural",    "Yunxia",    "Nam","Dễ thương"),
+                ("zh-CN-YunjianNeural",   "Yunjian",   "Nam","Kể chuyện, thể thao"),
+                ("zh-CN-YunyangNeural",   "Yunyang",   "Nam","Phổ thông, chuyên nghiệp"),
+                ("zh-CN-liaoning-XiaobeiNeural", "Xiaobei (Liêu Ninh)", "Nữ", "Phương ngữ, hài hước"),
+                ("zh-CN-shaanxi-XiaoniNeural",   "Xiaoni (Thiểm Tây)",  "Nữ", "Phương ngữ, tươi sáng"),
+            ],
+            "🇭🇰 Chinese (HK)": [
+                ("zh-HK-HiuMaanNeural", "HiuMaan", "Nữ", "Hong Kong, chuẩn"),
+                ("zh-HK-HiuGaaiNeural", "HiuGaai", "Nữ", "Hong Kong"),
+                ("zh-HK-WanLungNeural", "WanLung", "Nam","Hong Kong"),
+            ],
+            "🇹🇼 Chinese (TW)": [
+                ("zh-TW-HsiaoChenNeural", "HsiaoChen", "Nữ", "Đài Loan, chuẩn"),
+                ("zh-TW-HsiaoYuNeural",   "HsiaoYu",   "Nữ", "Đài Loan"),
+                ("zh-TW-YunJheNeural",    "YunJhe",    "Nam","Đài Loan"),
+            ],
+            "🇫🇷 French": [
+                ("fr-FR-DeniseNeural",             "Denise",                "Nữ", "Pháp, chuẩn"),
+                ("fr-FR-EloiseNeural",             "Eloise",                "Nữ", "Pháp"),
+                ("fr-FR-VivienneMultilingualNeural","Vivienne (Đa ngôn ngữ)","Nữ","Pháp, đa ngôn ngữ"),
+                ("fr-FR-HenriNeural",              "Henri",                 "Nam","Pháp, chuẩn"),
+                ("fr-FR-RemyMultilingualNeural",   "Remy (Đa ngôn ngữ)",    "Nam","Pháp, đa ngôn ngữ"),
+            ],
+            "🇩🇪 German": [
+                ("de-DE-KatjaNeural",                "Katja",                  "Nữ", "Đức, chuẩn"),
+                ("de-DE-AmalaNeural",                "Amala",                  "Nữ", "Đức"),
+                ("de-DE-SeraphinaMultilingualNeural","Seraphina (Đa ngôn ngữ)","Nữ", "Đức, đa ngôn ngữ"),
+                ("de-DE-ConradNeural",               "Conrad",                 "Nam","Đức, chuẩn"),
+                ("de-DE-KillianNeural",              "Killian",                "Nam","Đức"),
+                ("de-DE-FlorianMultilingualNeural",  "Florian (Đa ngôn ngữ)",  "Nam","Đức, đa ngôn ngữ"),
+            ],
+            "🇪🇸 Spanish": [
+                ("es-ES-ElviraNeural", "Elvira", "Nữ", "Tây Ban Nha, chuẩn"),
+                ("es-ES-XimenaNeural", "Ximena", "Nữ", "Tây Ban Nha"),
+                ("es-ES-AlvaroNeural", "Alvaro", "Nam","Tây Ban Nha"),
+                ("es-MX-DaliaNeural",  "Dalia",  "Nữ", "Mexico"),
+                ("es-MX-JorgeNeural",  "Jorge",  "Nam","Mexico"),
+            ],
+            "🇮🇹 Italian": [
+                ("it-IT-ElsaNeural",               "Elsa",                   "Nữ", "Ý, chuẩn"),
+                ("it-IT-IsabellaNeural",           "Isabella",               "Nữ", "Ý"),
+                ("it-IT-DiegoNeural",               "Diego",                  "Nam","Ý, chuẩn"),
+                ("it-IT-GiuseppeMultilingualNeural","Giuseppe (Đa ngôn ngữ)", "Nam","Ý, đa ngôn ngữ"),
+            ],
+            "🇧🇷 Portuguese": [
+                ("pt-BR-FranciscaNeural",           "Francisca",             "Nữ", "Brazil, chuẩn"),
+                ("pt-BR-ThalitaMultilingualNeural", "Thalita (Đa ngôn ngữ)", "Nữ", "Brazil, đa ngôn ngữ"),
+                ("pt-BR-AntonioNeural",             "Antonio",               "Nam","Brazil"),
+            ],
+            "🇷🇺 Russian": [
+                ("ru-RU-SvetlanaNeural", "Svetlana", "Nữ", "Nga"),
+                ("ru-RU-DmitryNeural",   "Dmitry",   "Nam","Nga"),
+            ],
+            "🇹🇭 Thai": [
+                ("th-TH-PremwadeeNeural", "Premwadee", "Nữ", "Thái"),
+                ("th-TH-NiwatNeural",     "Niwat",     "Nam","Thái"),
+            ],
+            "🇮🇩 Indonesian": [
+                ("id-ID-GadisNeural", "Gadis", "Nữ", "Indo"),
+                ("id-ID-ArdiNeural",  "Ardi",  "Nam","Indo"),
             ],
         }
         self._edge_full = EDGE_FULL
@@ -3865,9 +6216,9 @@ class App(tk.Tk):
         vlist_frame = tk.Frame(_ep, bg=P["white"],
                                 highlightthickness=1,
                                 highlightbackground=P["border"])
-        vlist_frame.pack(fill="x", padx=10, pady=4)
+        vlist_frame.pack(fill="both", expand=True, padx=10, pady=4)
         self._edge_listbox = tk.Listbox(vlist_frame,
-                                         font=(FN,8), height=5,
+                                         font=(FN,8), height=15,
                                          bg=P["white"], fg=P["text"],
                                          selectbackground=P["purple"],
                                          selectforeground="white",
@@ -4019,20 +6370,27 @@ class App(tk.Tk):
             print(f"[AutoClearCache] Loi: {_e}")
 
     def _init_network_mode(self):
-        """Kiem tra mang ngay khi khoi dong, set env vars va socket timeout."""
-        import os as _os, socket as _sock, time as _t
-        try:
-            _s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-            _s.settimeout(2)
-            _s.connect(("8.8.8.8", 53))
-            _s.close()
-            online = True
-        except Exception:
-            online = False
+        """Kiem tra mang trong background — KHONG block UI."""
+        def _check():
+            import socket as _sock, time as _t
+            try:
+                _s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                _s.settimeout(1.5)
+                _s.connect(("8.8.8.8", 53))
+                _s.close()
+                online = True
+            except Exception:
+                online = False
+            now = _t.time()
+            self.after(0, lambda o=online, n=now: self._finish_network_init(o, n))
 
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _finish_network_init(self, online: bool, ts: float):
+        import time as _t
         self._apply_network_mode(online)
         self._online_cache_val  = online
-        self._online_cache_time = _t.time()
+        self._online_cache_time = ts
 
     def _apply_network_mode(self, online: bool):
         """Cap nhat trang thai mang cho Backend."""
@@ -4054,16 +6412,25 @@ class App(tk.Tk):
         import socket as _sock, time as _time
         now = _time.time()
         # Dung cache neu kiem tra gan day (tranh check nhieu lan)
-        if hasattr(self, "_online_cache_time") and            now - self._online_cache_time < 10:
+        if hasattr(self, "_online_cache_time") and \
+                now - self._online_cache_time < 10:
             return self._online_cache_val
-        try:
-            _sock.setdefaulttimeout(2)
-            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-            s.connect(("8.8.8.8", 53))
-            s.close()
-            result = True
-        except Exception:
-            result = False
+        result = False
+        for _host, _port in [("8.8.8.8", 53), ("hf-mirror.com", 443)]:
+            try:
+                # FIX v3.65 (14): dung s.settimeout() (rieng cho socket nay)
+                # thay vi socket.setdefaulttimeout() (toan cuc, anh huong ca
+                # urllib.request.urlretrieve() cua _do_update() sau nay - tai
+                # file .exe update se bi ke thua timeout 2s nay va bao loi
+                # "read operation timed out" giua chung du mang binh thuong).
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect((_host, _port))
+                s.close()
+                result = True
+                break
+            except Exception:
+                continue
         self._online_cache_time = now
         self._online_cache_val  = result
         return result
@@ -4072,12 +6439,19 @@ class App(tk.Tk):
         """Hien badge Offline neu mat mang."""
         def _check():
             import socket as _sock
-            try:
-                _sock.setdefaulttimeout(3)
-                _sock.socket().connect(("8.8.8.8", 53))
-                online = True
-            except:
-                online = False
+            online = False
+            for _host, _port in [("8.8.8.8", 53), ("hf-mirror.com", 443)]:
+                try:
+                    # FIX v3.65 (14): tuong tu _is_online() - dung settimeout()
+                    # rieng cho socket nay, khong dung setdefaulttimeout() toan cuc.
+                    _s = _sock.socket()
+                    _s.settimeout(3)
+                    _s.connect((_host, _port))
+                    _s.close()
+                    online = True
+                    break
+                except Exception:
+                    continue
             self.after(0, lambda: _update(online))
         def _update(online):
             was_offline = hasattr(self, "_offline_badge")
@@ -4131,6 +6505,117 @@ class App(tk.Tk):
         badge.pack(side="left", padx=(8,0), pady=10)
         tk.Label(badge, text=text, font=(FN,9,"bold"),
                  bg=color, fg="white").pack()
+
+    def _giahan_status_text(self):
+        import re as _re
+        msg = self._login_msg or ""
+        if "vinh vien" in msg.lower() or "vĩnh viễn" in msg.lower():
+            return "Tài khoản: Vĩnh viễn"
+        m = _re.search(r"C[oò]n (\d+) ng[aà]y", msg, _re.IGNORECASE)
+        if m:
+            return f"Còn lại: {m.group(1)} ngày"
+        return "Trạng thái: Đã đăng nhập"
+
+    def _build_giahan_tab(self, parent):
+        """Tab Gia Han: tao QR VietQR 300k/30 ngay, tu dong cong ngay qua
+        webhook SePay o server (khong can nhap tay ma admin). Dung
+        urllib.request (khong dung requests) - giong het quy uoc SSL context
+        certifi da patch o dau file, tranh loi CERTIFICATE_VERIFY_FAILED."""
+        import json as _json, urllib.request as _ureq, threading as _th, io as _io
+        _GIAHAN_SERVER = "https://magicvoice-update-1.onrender.com"
+
+        parent.configure(bg=P["bg"])
+        wrap = tk.Frame(parent, bg=P["bg"])
+        wrap.pack(fill="both", expand=True)
+
+        card = tk.Frame(wrap, bg=P["white"], highlightthickness=1, highlightbackground=P["border"])
+        card.pack(pady=40)
+
+        tk.Label(card, text="💳  Gia Hạn Tài Khoản", font=(FN,16,"bold"), bg=P["white"], fg=P["text"]).pack(pady=(28,4), padx=60)
+        tk.Label(card, text="300.000đ  —  30 ngày sử dụng", font=(FN,10), bg=P["white"], fg=P["sub"]).pack()
+
+        status_lbl = tk.Label(card, text=self._giahan_status_text(), font=(FN,11,"bold"), bg=P["white"], fg=P["purple"])
+        status_lbl.pack(pady=(14,2))
+        tk.Label(card, text=f"Tài khoản: {self._username}", font=(FN,9), bg=P["white"], fg=P["dim"]).pack(pady=(0,10))
+
+        qr_lbl = tk.Label(card, bg=P["white"])
+        qr_lbl.pack(pady=4)
+
+        info_var = tk.StringVar(value="")
+        tk.Label(card, textvariable=info_var, font=(FN,9), bg=P["white"], fg=P["sub"], justify="center").pack(pady=(2,8))
+
+        result_var = tk.StringVar(value="")
+        result_lbl = tk.Label(card, textvariable=result_var, font=(FN,10,"bold"), bg=P["white"], fg=P["sub"], wraplength=340, justify="center")
+        result_lbl.pack(pady=(0,6))
+
+        gh_state = {"order_code": None, "stop": False, "photo": None}
+
+        def _api(path, payload=None, method="GET"):
+            data = _json.dumps(payload).encode("utf-8") if payload is not None else None
+            req = _ureq.Request(_GIAHAN_SERVER + path, data=data,
+                                 headers={"Content-Type": "application/json"}, method=method)
+            with _ureq.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+
+        def _fail(msg):
+            btn_qr.config(state="normal", text="Tạo Mã QR")
+            result_var.set("Lỗi: " + msg); result_lbl.config(fg=P["red"])
+
+        def _on_paid():
+            gh_state["stop"] = True
+            result_var.set("✅ Đã gia hạn thành công! Số ngày còn lại cập nhật ở lần đăng nhập tiếp theo.")
+            result_lbl.config(fg=P["green"])
+            btn_qr.config(text="Đã Gia Hạn Xong", state="disabled", bg=P["green"])
+
+        def _poll_loop():
+            while not gh_state["stop"]:
+                time.sleep(3)
+                if gh_state["stop"]: return
+                try:
+                    r = _api(f"/api/order_status?order_code={gh_state['order_code']}")
+                    if r.get("ok") and r.get("status") == "paid":
+                        self.after(0, _on_paid); return
+                except Exception:
+                    pass
+
+        def _show_qr(img_bytes, r):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(_io.BytesIO(img_bytes))
+                img.thumbnail((300, 300), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                gh_state["photo"] = photo
+                qr_lbl.config(image=photo)
+            except Exception:
+                pass
+            result_var.set("Quét mã QR bằng app ngân hàng để chuyển khoản")
+            result_lbl.config(fg=P["sub"])
+            amount_txt = f"{r['amount']:,}".replace(",", ".")
+            info_var.set(f"Nội dung CK: {r['order_code']}\nSố tiền: {amount_txt}đ\n{r['account_name']} - {r['account_no']}")
+            _th.Thread(target=_poll_loop, daemon=True).start()
+
+        def _create_qr():
+            u = (self._username or "").strip()
+            if not u:
+                result_var.set("Không xác định được tài khoản, vui lòng đăng nhập lại."); result_lbl.config(fg=P["red"]); return
+            btn_qr.config(state="disabled", text="Đang tạo QR...")
+            result_var.set("")
+            def _work():
+                try:
+                    r = _api("/api/create_qr", {"username": u}, method="POST")
+                    if not r.get("ok"):
+                        self.after(0, lambda: _fail(r.get("error","Lỗi không xác định"))); return
+                    gh_state["order_code"] = r["order_code"]
+                    img_bytes = _ureq.urlopen(r["qr_image_url"], timeout=15).read()
+                    self.after(0, lambda: _show_qr(img_bytes, r))
+                except Exception as ex:
+                    _err_msg = str(ex)[:80]
+                    self.after(0, lambda: _fail(_err_msg))
+            _th.Thread(target=_work, daemon=True).start()
+
+        btn_qr = tk.Button(card, text="Tạo Mã QR", command=_create_qr, font=(FN,11,"bold"),
+                            bg=P["gold"], fg="white", relief="flat", cursor="hand2", padx=30, pady=10)
+        btn_qr.pack(pady=(4,30))
 
     def _sb_section(self, parent, title):
         f=tk.Frame(parent,bg=P["bg"],pady=0); f.pack(fill="x",pady=(4,0))
@@ -4213,7 +6698,83 @@ class App(tk.Tk):
         self.sel_idx = len(self.lib.profiles) - 1
         self._refresh_voices()
         self._update_sidebar()
+        self._refresh_srt_voices()
+        self._show_preset_after_edge_save()
         messagebox.showinfo("Da luu", f"Da them '{vp.name}' vao Cai Dat San!")
+
+    def _ensure_fast_preset_visible(self, code):
+        """FIX v3.68 (tinh nang moi, theo yeu cau anh Bac): sau khi
+        'MG Nhanh' generate xong, auto-save voice vao library
+        (neu chua co) + hien preset list. Phong dung _ensure_edge_preset_visible."""
+        import time as _time
+        existing_idx = next((i for i, vp in enumerate(self.lib.profiles)
+                             if vp.instruct == f"fast:{code}"), -1)
+        if existing_idx < 0:
+            name = code
+            for c, lbl in FAST_VOICES_LIST:
+                if c == code:
+                    name = f"Nhanh — {lbl}"
+                    break
+            vp = VoiceProfile(
+                name=name, mode="fast", ref_audio=code,
+                instruct=f"fast:{code}",
+                created=_time.strftime("%Y-%m-%d %H:%M"),
+            )
+            self.lib.profiles.append(vp)
+            self.lib.save()
+            self.sel_idx = len(self.lib.profiles) - 1
+        else:
+            self.sel_idx = existing_idx
+        self._refresh_voices()
+        self._update_sidebar()
+        self._refresh_srt_voices()
+        self._show_preset_after_edge_save()
+
+    def _ensure_edge_preset_visible(self, code):
+        """Sau khi Edge TTS generate xong: auto-save voice vao library (neu chua co) + hien preset list."""
+        import time as _time
+        existing_idx = next((i for i, vp in enumerate(self.lib.profiles)
+                             if vp.instruct == f"edge:{code}"), -1)
+        if existing_idx < 0:
+            name = code
+            for lang_voices in getattr(self, "_edge_full", {}).values():
+                for c, n, g, d in lang_voices:
+                    if c == code:
+                        name = f"Edge — {n}"
+                        break
+            vp = VoiceProfile(
+                name=name, mode="edge", ref_audio=code,
+                instruct=f"edge:{code}",
+                created=_time.strftime("%Y-%m-%d %H:%M"),
+            )
+            self.lib.profiles.append(vp)
+            self.lib.save()
+            self.sel_idx = len(self.lib.profiles) - 1
+        else:
+            self.sel_idx = existing_idx
+        self._refresh_voices()
+        self._update_sidebar()
+        self._refresh_srt_voices()
+        self._show_preset_after_edge_save()
+
+    def _show_preset_after_edge_save(self):
+        """Sau khi luu edge preset: collapse picker panel, hien preset list dung vi tri.
+
+        Root cause: _edge_design_frame (listbox + sliders) chiem ~275px, day
+        _preset_section_frame xuong ngoai vung hien thi cua sidebar.
+        Fix: an picker (da chon xong), pack _preset_section_frame TRUOC separator
+        (_sb_edge_sep) de dam bao no hien thi dung vi tri ban dau.
+        """
+        # 1. An panel chon giong - da chon xong, khong can hien
+        if hasattr(self, "_edge_design_frame"):
+            self._edge_design_frame.pack_forget()
+        # 2. Hien Cai Dat San TRUOC separator (giu thu tu: preset → sep → edge_design)
+        if hasattr(self, "_preset_section_frame"):
+            if hasattr(self, "_sb_edge_sep"):
+                self._preset_section_frame.pack(fill="both", expand=True,
+                                                before=self._sb_edge_sep)
+            else:
+                self._preset_section_frame.pack(fill="both", expand=True)
 
     def _set_tts_mode(self, mode):
         """Chuyen che do TTS - khong goi _update_sidebar de tranh recursion."""
@@ -4229,25 +6790,90 @@ class App(tk.Tk):
         # Luon an de tranh hien 2 lua chon giong
         if hasattr(self, "edge_frame"):
             self.edge_frame.pack_forget()
-        # An/hien toan bo khung Thiet Ke Giong Edge TTS
-        if hasattr(self, "_edge_design_frame"):
-            if mode == "edge":
-                # Pack TRUOC _preset_section_frame (ca separator + label + list)
-                if hasattr(self, "_preset_section_frame"):
-                    self._edge_design_frame.pack(
-                        fill="x", pady=(0,4),
-                        before=self._preset_section_frame)
-                else:
-                    self._edge_design_frame.pack(fill="x", pady=(0,4))
-            else:
-                self._edge_design_frame.pack_forget()
 
-        # An/hien phan Cai Dat San (Voices) - chi hien khi dung MagicVoice
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-25 - lan 4): BUG THAT SU -
+        # cac khoi duoi day tung dung pack(before=self._preset_section_frame)
+        # trong khi _preset_section_frame co the DANG BI AN (pack_forget) tu
+        # lan goi truoc do (vd vua o mode "fast"). Tkinter YEU CAU widget
+        # lam moc "before" phai DANG duoc quan ly boi cung 1 geometry manager
+        # tai thoi diem goi - neu khong se loi/khong lam gi ca (that bai am
+        # tham), khien _edge_design_frame KHONG HIEN RA khi chuyen tu "fast"
+        # sang "edge". Sua GOC: luon pack_forget() HET cac khung dieu kien
+        # TRUOC, roi quyet dinh hien _preset_section_frame TRUOC TIEN (vi no
+        # la "moc" duoc cac khung khac dung), CUOI CUNG moi pack khung can
+        # thiet theo dung mode - dam bao "before" luon tro toi 1 widget dang
+        # duoc quan ly that su (hoac khong dung "before" khi khong can).
+        if hasattr(self, "fast_frame"):
+            self.fast_frame.pack_forget()
+        if hasattr(self, "_edge_design_frame"):
+            self._edge_design_frame.pack_forget()
+
+        # FIX v3.65: LUON hien phan "Cai Dat San" du dang o mode nao (truoc day
+        # an hoan toan khi mode=="edge" -> khach luu giong Edge xong (VoiceProfile
+        # mode="edge" van nam chung trong self.lib.profiles, khong tach rieng)
+        # nhung KHONG THAY danh sach do dau vi bi an -> phai chuyen qua MagicVoice
+        # roi chuyen lai moi thay, rat kho dung. Gio luon hien de chon lai nhanh,
+        # khong phai "di tim" nhu anh Bac yeu cau.
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-25 - lan 2): RIENG mode
+        # "fast" thi AN khung nay - da thay the bang Listbox day du o tren
+        # (fast_frame), tranh 1 khung "Cai Dat San" trong rong gay roi mat.
+        # QUAN TRONG: phai quyet dinh xong TRUOC KHI pack fast_frame/
+        # _edge_design_frame ben duoi, vi 2 khung do dung "before=" tro toi
+        # _preset_section_frame.
+        # FIX v3.68 (theo anh Bac bao 2026-07-26): mode "edge" cung AN khung
+        # nay - trung lap voi danh sach giong Edge ngay ben tren, gay roi
+        # mat/chong cheo. Giong het cach da lam cho mode "fast".
         if hasattr(self, "_preset_section_frame"):
-            if mode == "edge":
+            if mode in ("fast", "edge"):
                 self._preset_section_frame.pack_forget()
             else:
                 self._preset_section_frame.pack(fill="both", expand=True)
+
+        # FIX v3.68: danh sach "MG Nhanh" la Listbox DAY DU + thanh cuon,
+        # THAY HAN vi tri cua khung "Cai Dat San" (da an o tren khi mode=="fast").
+        if mode == "fast" and hasattr(self, "fast_frame"):
+            self.fast_frame.pack(fill="both", expand=True)
+            # Dong bo lai lua chon dang hien trong Listbox voi fast_voice_var
+            # hien tai (vd sau khi khoi phuc preset).
+            if hasattr(self, "fast_listbox") and hasattr(self, "fast_voice_var"):
+                _cur_fv = self.fast_voice_var.get() or FAST_VOICES_LIST[0][0]
+                _codes_fv = [v[0] for v in FAST_VOICES_LIST]
+                _idx_fv = _codes_fv.index(_cur_fv) if _cur_fv in _codes_fv else 0
+                self.fast_listbox.selection_clear(0, "end")
+                self.fast_listbox.selection_set(_idx_fv)
+                self.fast_listbox.see(_idx_fv)
+                self.fast_voice_display.set(FAST_VOICES_LIST[_idx_fv][1])
+
+        # An/hien toan bo khung Thiet Ke Giong Edge TTS.
+        # FIX v3.68 (theo anh Bac bao 2026-07-26): "Cai Dat San" gio da AN
+        # het khi mode=="edge" (xem khoi tren) nen KHONG con can "before="
+        # de chen truoc no nua - pack binh thuong voi fill="both", expand=True
+        # de danh sach giong Edge chiem het khoang trong vua duoc giai phong,
+        # dai ra giong het cach lam cho "MG Nhanh".
+        if mode == "edge" and hasattr(self, "_edge_design_frame"):
+            self._edge_design_frame.pack(fill="both", expand=True, pady=(0,4))
+
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26): tab SRT KHONG CON bo
+        # chon mode/giong rieng nua (da bo han - xem ghi chu o _build_srt_tab
+        # va _refresh_srt_voices) - chi con 1 nguon duy nhat la sidebar. Moi
+        # lan doi mode/giong o day, cap nhat lai nhan hien thi read-only
+        # trong tab SRT cho khop.
+        if hasattr(self, "_refresh_srt_voices"):
+            self._refresh_srt_voices()
+
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-25 - lan 5): DA BO goi
+        # _update_sidebar() o day. Ly do THEM (2026-07-25 lan 2) la de loc
+        # lai "Cai Dat San" theo mode - nhung sau do anh Bac yeu cau HOAN
+        # TAC bo loc (luon hien tat ca preset moi mode). Voi bo loc da bo,
+        # goi _update_sidebar() o day KHONG CON CAN THIET NUA, va no gay ra
+        # BUG THAT: _update_sidebar() doc self.sel_idx (preset dang chon
+        # trong "Cai Dat San") va GHI DE NGUOC lai fast_voice_var/edge_voice_var
+        # ve dung giong cua preset do - xoa mat lua chon giong VUA BAM trong
+        # Listbox/dropdown (vd bam giong khac trong "MG Nhanh" nhung
+        # _update_sidebar() lap tuc set lai ve giong cu cua preset dang
+        # chon) - day chinh la nguyen nhan loi "thu giong nao cung ra 1
+        # giong" anh Bac bao. KHONG duoc them lai loi goi nay tru khi that
+        # su can thiet VA da kiem tra ky khong gay overwrite lua chon.
 
     def _update_sidebar(self):
         if not hasattr(self,"cur_voice_lbl"): return
@@ -4268,11 +6894,33 @@ class App(tk.Tk):
                     codes = [v[0] for v in self._edge_voices]
                     if edge_code in codes:
                         self.edge_cb.current(codes.index(edge_code))
+            # FIX v3.68: preset "MG Nhanh" → khoi phuc dung giong
+            # da luu (giong het pattern Edge o tren, KHONG goi _set_tts_mode)
+            elif vp.mode=="fast" and vp.instruct.startswith("fast:"):
+                fast_code = vp.instruct.replace("fast:","").strip()
+                if hasattr(self,"fast_voice_var"):
+                    self.fast_voice_var.set(fast_code)
+                if hasattr(self,"_fast_voices"):
+                    codes = [v[0] for v in self._fast_voices]
+                    if fast_code in codes:
+                        _idx_fc = codes.index(fast_code)
+                        if hasattr(self, "fast_cb"):
+                            self.fast_cb.current(_idx_fc)
+                        if hasattr(self, "fast_listbox"):
+                            self.fast_listbox.selection_clear(0, "end")
+                            self.fast_listbox.selection_set(_idx_fc)
+                            self.fast_listbox.see(_idx_fc)
 
-        # Preset list — hiện TẤT CẢ voice, có nút X xóa
+        # Preset list — hien TAT CA moi mode (FIX v3.65 goc). FIX v3.68
+        # (2026-07-25): tung thu loc theo dung mode dang chon, nhung anh
+        # Bac xac nhan muon quay lai hanh vi goc - luon hien du du preset
+        # (Edge/Clone/Design/Fast tron lan, phan biet bang icon) de de doi
+        # qua lai, khong bi "mat" giong khoi tam nhin khi doi mode. Rieng
+        # mode "fast" van AN CA khung nay (thay bang Listbox rieng o tren,
+        # xem _set_tts_mode) nen khong anh huong gi vong lap duoi day.
         for w in self.preset_frame.winfo_children(): w.destroy()
         for i, vp in enumerate(self.lib.profiles):
-            mode_icon = {"clone":"🎯","design":"✨","auto":"🎲","edge":"🌐"}.get(vp.mode,"●")
+            mode_icon = {"clone":"🎯","design":"✨","edge":"🌐","fast":"⚡"}.get(vp.mode,"●")
             sel = (i == self.sel_idx)
             bg  = P["sel"] if sel else P["white"]
 
@@ -4289,8 +6937,7 @@ class App(tk.Tk):
             name_lbl.pack(side="left", fill="x", expand=True)
             name_lbl.bind("<Button-1>", lambda e, i=i: click(e, i))
 
-            # Nút X xóa (ẩn với voice Auto)
-            if vp.mode != "auto" or i > 0:
+            if True:  # Hien nut X cho tat ca voice
                 def del_voice(idx=i):
                     name = self.lib.profiles[idx].name
                     if messagebox.askyesno("Xóa voice", f"Xóa voice '{name}'?"):
@@ -4315,42 +6962,50 @@ class App(tk.Tk):
             def click(e, idx=i):
                 self.sel_idx = idx
                 vp_clicked = self.lib.profiles[idx]
-                # Tu dong chuyen mode dung theo loai preset
                 if vp_clicked.mode == "edge" and vp_clicked.instruct.startswith("edge:"):
                     edge_code = vp_clicked.instruct.replace("edge:","").strip()
                     if hasattr(self,"edge_voice_var"):
                         self.edge_voice_var.set(edge_code)
-                    if hasattr(self,"edge_cb") and hasattr(self,"_edge_voices"):
-                        codes = [v[0] for v in self._edge_voices]
-                        if edge_code in codes:
-                            self.edge_cb.current(codes.index(edge_code))
-                    self._set_tts_mode("edge")
+                    # Kich hoat edge mode nhung GIU preset list hien thi
+                    # KHONG goi _set_tts_mode("edge") vi no se an preset list
+                    self.tts_mode.set("edge")
+                    if hasattr(self, "_mode_btns_sb"):
+                        for _v, _b in self._mode_btns_sb.items():
+                            _b.config(
+                                bg=P["purple"] if _v=="edge" else P["bg"],
+                                fg="white"     if _v=="edge" else P["sub"],
+                                font=(FN,9,"bold") if _v=="edge" else (FN,9))
+                elif vp_clicked.mode == "fast" and vp_clicked.instruct.startswith("fast:"):
+                    # FIX v3.68: bam preset "fast" da luu trong "Cai Dat San"
+                    # -> chuyen dung sang mode "fast" (hien Listbox rieng),
+                    # dong bo dung giong da luu. An toan goi _set_tts_mode
+                    # (khong con overwrite lua chon nua - da bo _update_
+                    # sidebar() thua trong ham do, xem ghi chu tai do).
+                    fast_code = vp_clicked.instruct.replace("fast:","").strip()
+                    if hasattr(self,"fast_voice_var"):
+                        self.fast_voice_var.set(fast_code)
+                    self._set_tts_mode("fast")
                 else:
                     self._set_tts_mode("omnivoice")
                 self._refresh_voices()
                 self._update_sidebar()
+                # FIX v3.68 (theo anh Bac bao loi 2026-07-26): nhanh "edge"
+                # o tren KHONG goi _set_tts_mode() (co ly do rieng, xem ghi
+                # chu) nen khong tu dong refresh nhan SRT - goi rieng o day
+                # de dam bao MOI nhanh (edge/fast/omnivoice) deu cap nhat
+                # dung nhan hien thi trong tab SRT.
+                if hasattr(self, "_refresh_srt_voices"):
+                    self._refresh_srt_voices()
             row.bind("<Button-1>", click)
             name_lbl.bind("<Button-1>", click)
 
     # ─────── STATUS BAR ────────────────────────────────────────────
     def _build_statusbar(self):
-        bar=tk.Frame(self,bg=P["white"],pady=0)
+        self._statusbar_frame=bar=tk.Frame(self,bg=P["white"],pady=0)
         bar.pack(fill="x")
 
-        # Left: status + progress
-        left=tk.Frame(bar,bg=P["white"]); left.pack(side="left",fill="x",expand=True,padx=14,pady=6)
-        self.status_lbl=tk.Label(left,text="Sẵn sàng",font=(FN,9),
-                                  bg=P["white"],fg=P["sub"])
-        self.status_lbl.pack(side="left")
-        self._timer_label=tk.Label(left,text="",font=(FN,9,"bold"),
-                                    bg=P["white"],fg=P["purple"])
-        self._timer_label.pack(side="left",padx=(8,0))
-        self._timer_running=False
-        self._timer_start=0.0
-        self.pb=ttk.Progressbar(left,mode="determinate",maximum=100,length=180)
-        self.pb.pack(side="left",padx=(12,0))
-
-        # Right: output dir + format + BIG CREATE BUTTON
+        # Right: output dir + buttons + BIG CREATE BUTTON
+        # Pack TRƯỚC left để luôn hiển thị dù màn hình nhỏ
         right=tk.Frame(bar,bg=P["white"]); right.pack(side="right",padx=0,pady=0)
 
         # Output dir mini
@@ -4360,13 +7015,12 @@ class App(tk.Tk):
         tk.Entry(of_mini,textvariable=self.out_dir_var,font=(FN,8),
                  bg=P["sidebar"],fg=P["label"],relief="flat",
                  highlightthickness=1,highlightbackground=P["border"],
-                 width=22).pack(ipady=3)
+                 width=18).pack(ipady=3)
 
         tk.Button(right,text="📂",command=self._browse_out,
                   font=(FN,10),bg=P["white"],fg=P["sub"],relief="flat",
                   cursor="hand2",padx=4).pack(side="left")
 
-        # MOI: nut cau hinh naming toan cuc
         tk.Button(right,text="🏷",command=self._show_naming_dialog,
                   font=(FN,10),bg=P["white"],fg=P["purple"],relief="flat",
                   cursor="hand2",padx=4).pack(side="left")
@@ -4379,21 +7033,41 @@ class App(tk.Tk):
         self.cancel_btn.pack(side="left",padx=4)
 
         # Big Tạo button
-        self.create_btn=tk.Button(right,text="  ▶  Tạo  ",
-                                   command=self._create,
-                                   font=(FN,12,"bold"),
-                                   bg=P["purple"],fg="white",
-                                   activebackground=P["purple2"],
-                                   activeforeground="white",
-                                   relief="flat",cursor="hand2",
-                                   padx=28,pady=12)
-        self.create_btn.pack(side="left",padx=(4,0))
+        self.create_btn = tk.Button(right, text="  ▶  Tạo  ",
+                                    command=self._create,
+                                    font=(FN, 12, "bold"),
+                                    bg=P["purple"], fg="white",
+                                    activebackground="#3b60e0",
+                                    activeforeground="white",
+                                    relief="flat", cursor="hand2",
+                                    padx=28, pady=12)
+        self.create_btn.pack(side="left", padx=(6,0))
 
-        # Log (collapsible)
-        log_bar=tk.Frame(self,bg=P["bg"]); log_bar.pack(fill="x")
-        tk.Label(log_bar,text="📋 Log:",font=(FN,8),
+        # Left: status + progress — pack SAU right, fill phần còn lại
+        left=tk.Frame(bar,bg=P["white"]); left.pack(side="left",fill="x",expand=True,padx=14,pady=6)
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-27): status_lbl (dong chu
+        # tien do dai/ngan thay doi lien tuc, vd "[2/9] And now an imaginary
+        # wife?...") duoc pack TRUOC timer/progressbar cung hang (side="left")
+        # -> moi lan doi do dai chu, timer+progressbar bi DAY DICH CHUYEN VI
+        # TRI theo, nhin giat/kho chiu. Anh Bac chi muon thay dong ho + thanh
+        # chay, KHONG can dong chu nay nua. Van giu widget ton tai (khong xoa
+        # han) de ham self._st() o rat nhieu noi trong code khong bi loi khi
+        # goi .config() - chi KHONG pack ra man hinh nua.
+        self.status_lbl=tk.Label(left,text="Sẵn sàng",font=(FN,9),
+                                  bg=P["white"],fg=P["sub"])
+        self._timer_label=tk.Label(left,text="",font=(FN,9,"bold"),
+                                    bg=P["white"],fg=P["purple"])
+        self._timer_label.pack(side="left")
+        self._timer_running=False
+        self._timer_start=0.0
+        self.pb=ttk.Progressbar(left,mode="determinate",maximum=100,length=260)
+        self.pb.pack(side="left",padx=(12,0))
+
+        # Log (collapsible) — lưu log_bar thành self._log_bar để re-pack đúng thứ tự
+        self._log_bar=tk.Frame(self,bg=P["bg"]); self._log_bar.pack(fill="x")
+        tk.Label(self._log_bar,text="📋 Log:",font=(FN,8),
                  bg=P["bg"],fg=P["dim"],padx=8).pack(side="left",pady=2)
-        tk.Button(log_bar,text="Xóa",command=lambda:self.logbox.delete("1.0","end"),
+        tk.Button(self._log_bar,text="Xóa",command=lambda:self.logbox.delete("1.0","end"),
                   font=(FN,8),bg=P["bg"],fg=P["dim"],relief="flat",cursor="hand2"
                   ).pack(side="right",padx=8)
         self.logbox=scrolledtext.ScrolledText(self,height=4,state="disabled",
@@ -4409,49 +7083,424 @@ class App(tk.Tk):
         self.logbox.tag_configure("info", foreground=P["blue"])
 
     # ─────── STARTUP INFO ──────────────────────────────────────────
-    def _preview_voice(self):
-        """Tạo và phát thử giọng đang chọn với câu mẫu ngắn."""
-        if not self.model_loaded:
-            messagebox.showwarning("Chưa tải model", "Hãy tải model trước!"); return
+    # ─── PREVIEW SAMPLES theo ngôn ngữ ────────────────────────────
+    _PREVIEW_SAMPLES = {
+        "vi": ("Xin chào! Đây là đoạn kiểm tra giọng đọc. "
+               "Giọng nghe có tự nhiên và rõ ràng không? "
+               "Hãy lắng nghe kỹ để cảm nhận chất lượng và sắc thái của giọng này nhé."),
+        "en": ("Hello! This is a voice preview sample to check quality and naturalness. "
+               "Does this voice sound clear, smooth, and comfortable to listen to? "
+               "I hope you enjoy the tone and clarity of this voice."),
+        "ja": ("こんにちは！これは音声プレビューのサンプルです。"
+               "声は自然でクリアに聞こえますか？この声の品質と特徴をぜひご確認ください。"),
+        "ko": ("안녕하세요! 이것은 음성 미리보기 샘플입니다. "
+               "목소리가 자연스럽고 선명하게 들리나요? 이 음성의 품질과 특색을 확인해 보세요."),
+        "zh": ("你好！这是语音预览示例，用于检查这个声音的质量和自然度。"
+               "这个声音听起来清晰、流畅吗？希望您对这个声音的音质感到满意。"),
+        "fr": ("Bonjour! Voici un exemple de prévisualisation vocale. "
+               "Cette voix vous semble-t-elle claire et naturelle? "
+               "Prenez le temps d'écouter attentivement la qualité de cette voix."),
+        "de": ("Hallo! Dies ist ein Sprachvorschau-Beispiel. "
+               "Klingt diese Stimme klar und natürlich? "
+               "Hören Sie genau hin, um die Qualität dieser Stimme zu beurteilen."),
+        "es": ("¡Hola! Este es un ejemplo de vista previa de voz. "
+               "¿Esta voz suena clara y natural? "
+               "Escuche con atención para apreciar la calidad y el tono de esta voz."),
+        "th": ("สวัสดี! นี่คือตัวอย่างการแสดงตัวอย่างเสียง "
+               "เสียงฟังดูชัดเจนและเป็นธรรมชาติหรือไม่? "
+               "โปรดฟังอย่างตั้งใจเพื่อประเมินคุณภาพของเสียงนี้"),
+        "id": ("Halo! Ini adalah sampel pratinjau suara. "
+               "Apakah suara ini terdengar jelas dan alami? "
+               "Dengarkan dengan seksama untuk menilai kualitas suara ini."),
+        "pt": ("Olá! Este é um exemplo de pré-visualização de voz. "
+               "Essa voz soa clara e natural? "
+               "Ouça com atenção para avaliar a qualidade desta voz."),
+        "it": ("Ciao! Questo è un campione di anteprima vocale. "
+               "Questa voce suona chiara e naturale? "
+               "Ascolta attentamente per valutare la qualità di questa voce."),
+        "ru": ("Привет! Это образец предварительного просмотра голоса. "
+               "Звучит ли этот голос четко и естественно? "
+               "Внимательно послушайте, чтобы оценить качество этого голоса."),
+    }
+
+    def _detect_preview_lang(self, edge_code="", vp=None, instruct=None):
+        if edge_code:
+            return edge_code.split("-")[0].lower()
+        # FIX v3.65 (9): uu tien TUYET DOI vp.lang neu khach da chon tuong
+        # minh luc luu voice (dropdown "Ngon ngu giong" trong VoiceDialog) -
+        # chinh xac 100%, khong con phai doan qua ten/instruct nua. Neu rong
+        # (voice cu chua co field nay, hoac khach chon "(Tu dong doan)") thi
+        # roi xuong cac buoc doan heuristic ben duoi nhu truoc.
+        if vp and getattr(vp, "lang", ""):
+            return vp.lang
+        # FIX v3.65: cac preset Voice Design trong VOICE_PRESETS thuoc nhom
+        # "English - British/American/Other Accents" deu co instruct chua tu
+        # "... accent" (vd "female, young adult, british accent") - day la
+        # giong TIENG ANH voi am sac khac nhau, KHONG phai giong ban ngu.
+        # Truoc day ham nay chi doan ngon ngu qua TEN preset (vp.name) va
+        # khong co keyword nao cho tieng Anh -> moi preset tieng Anh deu roi
+        # ve mac dinh "vi" o cuoi ham, khien nghe thu giong Anh lai doc mau
+        # tieng Viet. Gio check instruct truoc: co "accent" -> chac chan la "en".
+        #
+        # FIX v3.65 (8): CHI ap dung luat "accent" nay khi vp.mode=="design"
+        # (hoac khi goi truc tiep voi instruct string, khong kem vp - vd tu
+        # VoiceBrowserDialog._preview()). Bug thuc te: giong CLONE "vietnu"
+        # (tieng Viet that) bi nghe thu ra tieng Anh vi truong instruct cua
+        # no con sot chu "accent" tu VoiceDialog._save() truoc day KHONG
+        # phan biet mode luc luu (da fix rieng o _save()) - nhung van can
+        # chot an toan o day phong truong hop du lieu cu da luu tu truoc.
+        _instruct = instruct if instruct is not None else (getattr(vp, "instruct", "") or "" if vp else "")
+        _is_design = (vp is None) or (getattr(vp, "mode", None) == "design")
+        if _is_design and "accent" in (_instruct or "").lower():
+            return "en"
+        if vp:
+            n = vp.name.lower()
+            # FIX v3.65 (8): bo keyword "anh" don le - qua rong, de trung
+            # nham voi rat nhieu ten tieng Viet co chua chuoi "anh" (Thanh,
+            # Khanh, Oanh, Ngoc Anh...). Giu lai "english/british/american"
+            # vi it kha nang trung ngau nhien hon.
+            for kw, lang in [("việt","vi"),("viet","vi"),(" vn","vi"),
+                              ("nhật","ja"),("japan","ja"),
+                              ("hàn","ko"),("korea","ko"),
+                              ("trung","zh"),("china","zh"),("chinese","zh"),
+                              ("pháp","fr"),("french","fr"),
+                              ("đức","de"),("german","de"),
+                              ("tây ban","es"),("spanish","es"),
+                              ("thái","th"),("thai","th"),
+                              ("indo","id"),("bahasa","id"),
+                              ("english","en"),
+                              ("british","en"),("american","en")]:
+                if kw in n: return lang
+        return "vi"
+
+    def _run_voice_preview(self, text, log_label, btn_ref=None, override_kw=None, override_edge_code=None, override_fast_code=None):
+        """Core preview: generate audio từ text + voice đang chọn, phát không lưu.
+        btn_ref: button cần disable/restore (ngoài self.prev_btn); có thể None.
+        override_kw: FIX v3.65 - neu truyen vao (vd {"instruct": "..."}), dung
+        THANG kw nay cho Backend.gen() thay vi doc tu self.lib.profiles/sel_idx.
+        Dung boi VoiceBrowserDialog de nghe thu 1 instruct TRUOC khi luu voice.
+        override_edge_code: FIX v3.65 (2) - neu truyen vao (vd "es-ES-ElviraNeural"),
+        dung THANG ma Edge nay thay vi doc vp.instruct tu self.lib.profiles/sel_idx.
+        Dung boi nut "Thu Giong" chinh khi dang o Edge TTS mode, de nghe thu DUNG
+        giong dang duyet trong panel "Thiet Ke Giong Edge TTS" (truoc day doc
+        nham theo voice DA LUU cu trong sel_idx, khong phai giong vua chon)."""
         if hasattr(self, "_prev_thread") and self._prev_thread and self._prev_thread.is_alive():
-            return
+            self._log("⏳ Đang phát thử, vui lòng chờ...", "warn"); return False
+
         vp = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
-        vname = vp.name if vp else "Auto"
-        # Câu mẫu ngắn để thử giọng
-        sample = "Hello! This is a quick voice preview. How does this sound to you?"
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-25 - lan 6): BUG THAT -
+        # khi override_fast_code duoc truyen (nghe thu MG Nhanh), _is_edge
+        # VAN duoc tinh doc lap tu vp.mode (preset dang CHON trong "Cai Dat
+        # San", KHONG lien quan gi toi giong vua bam trong danh sach MG
+        # Nhanh) - neu preset dang chon tinh co la Edge, _is_edge = True SE
+        # "thang" truoc trong if/elif ben duoi, bo qua het override_fast_code.
+        # Sua: chi tinh _is_edge tu vp.mode khi KHONG co ca override_edge_code
+        # LAN override_fast_code (tuc dang o truong hop "nghe thu theo preset
+        # dang chon", khong phai "nghe thu theo lua chon nhanh vua bam").
+        if override_edge_code:
+            _is_edge = True
+            _edge_code = override_edge_code
+        elif override_fast_code:
+            _is_edge = False
+            _edge_code = ""
+        else:
+            _is_edge = (override_kw is None and vp and vp.mode == "edge" and
+                        hasattr(vp, "instruct") and vp.instruct.startswith("edge:"))
+            _edge_code = vp.instruct.replace("edge:", "").strip() if _is_edge else ""
+
+        # FIX v3.68 (tinh nang moi, theo yeu cau anh Bac): nghe thu mode
+        # "MG Nhanh" - phong dung pattern _is_edge o tren.
+        if override_fast_code:
+            _is_fast = True
+            _fast_code = override_fast_code
+        else:
+            _is_fast = (override_kw is None and not _is_edge and vp and vp.mode == "fast" and
+                        hasattr(vp, "instruct") and vp.instruct.startswith("fast:"))
+            _fast_code = vp.instruct.replace("fast:", "").strip() if _is_fast else ""
+
+        if not self.model_loaded and not _is_edge and not _is_fast:
+            messagebox.showwarning("Chưa tải model", "Hãy tải model trước!"); return False
+
+        self._log(f"🎧 Nghe thử: {log_label}", "info")
+        # Disable cả 2 button nếu có
         self.prev_btn.config(text="⏳ Đang tạo...", state="disabled", bg="#fef9c3")
-        self._log(f"🎵 Thử giọng: {vname}", "info")
+        if btn_ref:
+            btn_ref.config(text="⏳ Đang tạo...", state="disabled", bg="#fef9c3")
 
         def _gen():
             try:
-                import torchaudio, tempfile, os
-                kw = self._vkw()
-                a  = Backend.gen(sample, num_step=self.steps_var.get(),
-                                 speed=self._get_speed(), **kw)
-                # Lưu file tạm
+                import tempfile, os as _os
                 tmp = tempfile.mktemp(suffix=".wav")
-                torchaudio.save(tmp, a[0], 24000)
+
+                if _is_edge:
+                    import asyncio, edge_tts, inspect as _ins, wave as _wave
+                    _use_pcm = 'codec' in _ins.signature(
+                        edge_tts.Communicate.__init__).parameters
+
+                    async def _do_edge():
+                        # FIX v3.65 (10): them thu lai 3 lan - truoc day chi
+                        # thu 1 lan, neu Microsoft Edge TTS tra ve rong (loi
+                        # "No audio was received" - hay gap khi goi lien tuc
+                        # nhieu request/mang chap chon) se bao loi ngay.
+                        # Dong bo voi retry 3 lan da co san o luong tao SRT
+                        # hang loat (_gen_one). Kem verify file khong rong
+                        # truoc khi coi la thanh cong.
+                        _last_err = None
+                        for _attempt in range(3):
+                            try:
+                                if _use_pcm:
+                                    tmp_pcm = tmp + ".pcm"
+                                    comm = edge_tts.Communicate(
+                                        text, _edge_code,
+                                        codec="audio-24khz-16bit-mono-pcm")
+                                    await comm.save(tmp_pcm)
+                                    if not _os.path.exists(tmp_pcm) or _os.path.getsize(tmp_pcm) < 100:
+                                        raise RuntimeError("Khong nhan duoc audio (file PCM rong)")
+                                    with open(tmp_pcm, 'rb') as f: pcm = f.read()
+                                    with _wave.open(tmp, 'wb') as wf:
+                                        wf.setnchannels(1); wf.setsampwidth(2)
+                                        wf.setframerate(24000); wf.writeframes(pcm)
+                                    try: _os.remove(tmp_pcm)
+                                    except Exception: pass
+                                else:
+                                    tmp_mp3 = tmp + ".mp3"
+                                    comm = edge_tts.Communicate(text, _edge_code)
+                                    await comm.save(tmp_mp3)
+                                    if not _os.path.exists(tmp_mp3) or _os.path.getsize(tmp_mp3) < 100:
+                                        raise RuntimeError("Khong nhan duoc audio (file MP3 rong)")
+                                    import imageio_ffmpeg as _iff
+                                    import subprocess as _spe
+                                    _spe.run(
+                                        [_iff.get_ffmpeg_exe(), '-i', tmp_mp3,
+                                         '-ar', '24000', '-ac', '1', '-f', 'wav',
+                                         tmp, '-y', '-loglevel', 'quiet'],
+                                        timeout=30, check=True,
+                                        creationflags=0x08000000)
+                                    try: _os.remove(tmp_mp3)
+                                    except Exception: pass
+                                _last_err = None
+                                break
+                            except Exception as _e_edge:
+                                _last_err = _e_edge
+                                if _attempt < 2:
+                                    await asyncio.sleep(1.5)
+                        if _last_err:
+                            raise _last_err
+
+                    asyncio.run(_do_edge())
+                elif _is_fast:
+                    # FIX v3.68 (tinh nang moi, theo yeu cau anh Bac): nghe
+                    # thu mode "MG Nhanh" - local, khong can mang.
+                    import soundfile as _sf_fp
+                    _t_fp = _fast_generate(text, _fast_code, speed=self._get_speed())
+                    _sf_fp.write(tmp, _t_fp.squeeze().numpy(), 24000, subtype='PCM_16')
+                else:
+                    import soundfile as _sf_p, numpy as _np_p
+                    if override_kw is not None:
+                        kw = override_kw
+                    else:
+                        kw = {}
+                        if vp and vp.mode == "clone":
+                            ref = vp.ref_audio
+                            if ref and not _os.path.isfile(ref):
+                                from pathlib import Path as _Pp
+                                _alt = _Pp(_SCRIPT_DIR) / "clone_refs" / _Pp(ref).name
+                                if _alt.exists(): ref = str(_alt)
+                            if ref and _os.path.isfile(ref):
+                                kw["ref_audio"] = self._prepare_ref_audio(ref)
+                            else:
+                                raise ValueError(f"Không tìm thấy file audio mẫu: {vp.ref_audio}")
+                        elif vp and vp.mode == "design":
+                            if not vp.instruct:
+                                raise ValueError("Voice Design thiếu mô tả!")
+                            kw["instruct"] = _normalize_instruct(vp.instruct)
+
+                    a = Backend.gen(text, num_step=self.steps_var.get(),
+                                    speed=self._get_speed(), **kw)
+                    _aud = a
+                    if isinstance(_aud, (list, tuple)): _aud = _aud[0]
+                    if hasattr(_aud, 'cpu'): _aud = _aud.detach().cpu().numpy()
+                    _aud = _np_p.squeeze(_aud)
+                    if _aud.ndim == 0: _aud = _aud.reshape(1)
+                    _sf_p.write(tmp, _aud.astype('float32'), 24000, subtype='PCM_16')
+
                 self._prev_tmp = tmp
-                # Phát bằng player hệ thống
                 if sys.platform == "win32":
-                    import winsound
-                    self.after(0, lambda: self.prev_btn.config(
-                        text="🔊 Đang phát...", bg="#dbeafe"))
+                    import winsound, threading as _thr30
+                    self.after(0, lambda: [
+                        self.prev_btn.config(text="🔊 Đang phát...", bg="#dbeafe"),
+                        btn_ref.config(text="🔊 Đang phát...", bg="#dbeafe") if btn_ref else None
+                    ])
+                    # Auto-stop sau 30 giây
+                    def _autostop():
+                        import time; time.sleep(30)
+                        try: winsound.PlaySound(None, winsound.SND_PURGE)
+                        except Exception: pass
+                    _thr30.Thread(target=_autostop, daemon=True).start()
                     winsound.PlaySound(tmp, winsound.SND_FILENAME)
                 else:
-                    import subprocess as _sp
-                    _sp.Popen(["aplay", tmp])
-                self._log(f"✅ Thử giọng xong: {vname}", "ok")
+                    import subprocess as _sp, threading as _thr30
+                    proc = _sp.Popen(["aplay", tmp])
+                    def _autostop():
+                        import time; time.sleep(30)
+                        try: proc.terminate()
+                        except Exception: pass
+                    _thr30.Thread(target=_autostop, daemon=True).start()
+                self._log(f"✅ Nghe thử xong: {log_label}", "ok")
             except Exception as e:
-                self._log(f"❌ Lỗi thử giọng: {e}", "err")
+                self._log(f"❌ Lỗi nghe thử: {e}", "err")
             finally:
-                self.after(0, lambda: self.prev_btn.config(
-                    text="▶  Thử Giọng", state="normal",
-                    bg="#f0fdf4"))
+                self.after(0, lambda: [
+                    self.prev_btn.config(text="▶  Thử Giọng", state="normal", bg="#f0fdf4"),
+                    btn_ref.config(text="🎧 Nghe Thử", state="normal", bg="#f0fdf4") if btn_ref else None
+                ])
 
         import threading
         self._prev_thread = threading.Thread(target=_gen, daemon=True)
         self._prev_thread.start()
+        return True
+
+    def _preview_instruct(self, instruct, label, btn_ref=None):
+        """FIX v3.65: nghe thu TRUC TIEP 1 cau instruct (dung boi VoiceBrowserDialog
+        de khach nghe thu giong TRUOC khi bam Luu) - khong phu thuoc vao
+        self.lib.profiles/sel_idx nhu _preview_voice."""
+        if not instruct or not instruct.strip():
+            messagebox.showwarning("Thiếu mô tả", "Hãy chọn giọng hoặc nhập Instruct trước!")
+            return False
+        if not self.model_loaded:
+            messagebox.showwarning("Chưa tải model", "Hãy tải model trước!"); return False
+        lang = self._detect_preview_lang(instruct=instruct)
+        sample = self._PREVIEW_SAMPLES.get(lang, self._PREVIEW_SAMPLES["en"])
+        kw = {"instruct": _normalize_instruct(instruct)}
+        return self._run_voice_preview(sample, label, btn_ref=btn_ref, override_kw=kw)
+
+    def _preview_voice(self):
+        """Thử giọng bằng đoạn mẫu tự động đúng ngôn ngữ."""
+        # FIX v3.65 (2): neu dang o che do Edge TTS, uu tien dung edge_voice_var
+        # (giong DANG duoc chon/duyet trong panel "Thiet Ke Giong Edge TTS")
+        # thay vi doc qua self.lib.profiles[sel_idx] (co the la voice CU da
+        # luu tu truoc, khac voi giong vua chon) - dam bao nghe thu DUNG giong
+        # se dung khi bam nut "Tao" that su.
+        if (hasattr(self, "tts_mode") and self.tts_mode.get() == "edge"
+                and hasattr(self, "edge_voice_var") and self.edge_voice_var.get()):
+            _edge_code = self.edge_voice_var.get()
+            _lang = self._detect_preview_lang(_edge_code)
+            sample = self._PREVIEW_SAMPLES.get(_lang, self._PREVIEW_SAMPLES["en"])
+            self._run_voice_preview(sample, f"Edge: {_edge_code}", override_edge_code=_edge_code)
+            return
+
+        # FIX v3.68 (tinh nang moi, theo yeu cau anh Bac): nghe thu dung
+        # giong DANG duoc chon trong dropdown "MG Nhanh", phong
+        # dung pattern Edge o tren.
+        if (hasattr(self, "tts_mode") and self.tts_mode.get() == "fast"
+                and hasattr(self, "fast_voice_var") and self.fast_voice_var.get()):
+            _fast_code = self.fast_voice_var.get()
+            sample = self._PREVIEW_SAMPLES.get("en", "")
+            self._run_voice_preview(sample, f"Nhanh: {_fast_code}", override_fast_code=_fast_code)
+            return
+
+        vp = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+        _is_edge = (vp and vp.mode == "edge" and
+                    hasattr(vp, "instruct") and vp.instruct.startswith("edge:"))
+        _edge_code = vp.instruct.replace("edge:", "").strip() if _is_edge else ""
+        _lang = self._detect_preview_lang(_edge_code, vp)
+        sample = self._PREVIEW_SAMPLES.get(_lang, self._PREVIEW_SAMPLES["en"])
+        vname = vp.name if vp else ""
+        self._run_voice_preview(sample, vname)
+
+    @staticmethod
+    def _smart_trim_preview(raw, max_chars=300):
+        """Cắt text tại cuối câu gần nhất trong max_chars ký tự."""
+        if len(raw) <= max_chars:
+            return raw
+        chunk = raw[:max_chars]
+        # Tìm cuối câu cuối cùng (cả dấu Việt/Nhật/Trung)
+        last_end = max(
+            chunk.rfind('.'), chunk.rfind('!'), chunk.rfind('?'),
+            chunk.rfind('。'), chunk.rfind('！'), chunk.rfind('？'),
+            chunk.rfind('…'),
+        )
+        if last_end > max_chars // 3:
+            return chunk[:last_end + 1].strip()
+        last_space = chunk.rfind(' ')
+        if last_space > 0:
+            return chunk[:last_space].strip()
+        return chunk.strip()
+
+    def _preview_text_input(self):
+        """Nghe thử đoạn văn bản đang nhập — tối đa ~30s, tự dừng."""
+        raw = self.txt_in.get("1.0", "end-1c").strip()
+        if not raw:
+            messagebox.showinfo("Trống", "Hãy nhập văn bản trước khi nghe thử!"); return
+        text = self._smart_trim_preview(raw, max_chars=300)
+        if len(raw) > len(text):
+            self._log(f"ℹ️  Nghe thử {len(text)} ký tự đầu · tự dừng sau 30s", "info")
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26): BUG THAT - nut "Xem
+        # truoc"/"Nghe Thu" o tab Van Ban truoc day LUON doc giong tu preset
+        # dang chon trong "Cai Dat San" (self.sel_idx), BO QUA hoan toan che
+        # do dang chon o sidebar (Edge TTS / MG Nhanh) - khac voi nut "Thu
+        # Giong" chinh o sidebar (_preview_voice) da uu tien dung tts_mode.
+        # Day chinh la nguyen nhan: chon giong Adam (MG Nhanh) nhung bam
+        # "Nghe Thu" o tab Van Ban lai ra giong Aria (preset Edge dang chon).
+        # Sua: ap dung DUNG pattern uu tien tts_mode nhu _preview_voice.
+        if (hasattr(self, "tts_mode") and self.tts_mode.get() == "edge"
+                and hasattr(self, "edge_voice_var") and self.edge_voice_var.get()):
+            _edge_code = self.edge_voice_var.get()
+            self._run_voice_preview(text, f"Edge: {_edge_code} · {len(text)} ký tự",
+                                    btn_ref=self._txt_prev_btn, override_edge_code=_edge_code)
+            return
+        if (hasattr(self, "tts_mode") and self.tts_mode.get() == "fast"
+                and hasattr(self, "fast_voice_var") and self.fast_voice_var.get()):
+            _fast_code = self.fast_voice_var.get()
+            self._run_voice_preview(text, f"Nhanh: {_fast_code} · {len(text)} ký tự",
+                                    btn_ref=self._txt_prev_btn, override_fast_code=_fast_code)
+            return
+        vp = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+        vname = vp.name if vp else "giọng đang chọn"
+        self._run_voice_preview(text, f"{vname} · {len(text)} ký tự",
+                                btn_ref=self._txt_prev_btn)
+
+    def _preview_srt_input(self):
+        """Nghe thử nội dung SRT đang nhập — strip timestamp, tối đa ~30s."""
+        import re as _re
+        raw = self.srt_editor.get("1.0", "end-1c").strip()
+        if not raw:
+            messagebox.showinfo("Trống", "Hãy nhập nội dung SRT trước khi nghe thử!"); return
+        # Strip số thứ tự và timestamp SRT
+        lines = raw.splitlines()
+        text_lines = []
+        for line in lines:
+            line = line.strip()
+            if not line: continue
+            if line.isdigit(): continue
+            if _re.match(r'^\d+:\d+:\d+[,\.]\d+\s*-->\s*\d+:\d+:\d+[,\.]\d+', line): continue
+            text_lines.append(line)
+        plain = ' '.join(text_lines)
+        if not plain.strip():
+            messagebox.showinfo("Trống", "Không tìm thấy nội dung text trong SRT!"); return
+        text = self._smart_trim_preview(plain, max_chars=300)
+        if len(plain) > len(text):
+            self._log(f"ℹ️  Nghe thử {len(text)} ký tự đầu SRT · tự dừng sau 30s", "info")
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26): tab SRT khong con bo
+        # chon rieng - doc THANG theo sidebar (self.tts_mode), giong het
+        # pattern _preview_text_input.
+        if (hasattr(self, "tts_mode") and self.tts_mode.get() == "edge"
+                and hasattr(self, "edge_voice_var") and self.edge_voice_var.get()):
+            _edge_code = self.edge_voice_var.get()
+            self._run_voice_preview(text, f"SRT · Edge: {_edge_code} · {len(text)} ký tự",
+                                    btn_ref=self._srt_prev_btn, override_edge_code=_edge_code)
+            return
+        if (hasattr(self, "tts_mode") and self.tts_mode.get() == "fast"
+                and hasattr(self, "fast_voice_var") and self.fast_voice_var.get()):
+            _fast_code = self.fast_voice_var.get()
+            self._run_voice_preview(text, f"SRT · Nhanh: {_fast_code} · {len(text)} ký tự",
+                                    btn_ref=self._srt_prev_btn, override_fast_code=_fast_code)
+            return
+        # Lấy voice từ SRT tab (MagicVoice preset)
+        vp = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+        vname = vp.name if vp else "giọng đang chọn"
+        self._run_voice_preview(text, f"SRT · {vname} · {len(text)} ký tự",
+                                btn_ref=self._srt_prev_btn)
 
     def _preview_stop(self):
         """Dừng phát thử giọng."""
@@ -4465,6 +7514,10 @@ class App(tk.Tk):
         except Exception:
             pass
         self.prev_btn.config(text="▶  Thử Giọng", state="normal", bg="#f0fdf4")
+        if hasattr(self, "_txt_prev_btn"):
+            self._txt_prev_btn.config(text="🎧 Nghe Thử", state="normal", bg="#f0fdf4")
+        if hasattr(self, "_srt_prev_btn"):
+            self._srt_prev_btn.config(text="🎧 Nghe Thử", state="normal", bg="#f0fdf4")
         self._log("⏹ Đã dừng thử giọng", "info")
 
     def _check_gpu_and_warn(self):
@@ -4474,20 +7527,40 @@ class App(tk.Tk):
             has_cuda = torch.cuda.is_available()
 
             if not has_cuda:
-                title = "Khong Co GPU NVIDIA"
-                msg = (
-                    "May ban dang chay che do CPU.\n\n"
-                    "Anh huong:\n"
-                    "  - Tao voice rat cham (30-60s/cau)\n"
-                    "  - Voice Clone co the khong on dinh\n\n"
-                    "Goi y:\n"
-                    "  - Dung Edge TTS cho van ban dai\n"
-                    "  - Chi dung MagicVoice cho doan ngan\n"
-                    "  - Upgrade GPU NVIDIA de dung tot hon"
-                )
-                color = P["red"]
-                gpu_info = "Khong co GPU NVIDIA"
+                # Kiem tra co GPU NVIDIA that su khong (qua nvcuda.dll)
+                import os as _os
+                _has_nvidia_hw = any(_os.path.exists(p) for p in [
+                    r"C:\Windows\System32\nvcuda.dll",
+                    r"C:\Windows\System32\nvml.dll",
+                ])
+                if _has_nvidia_hw:
+                    title = "GPU NVIDIA Chưa Kích Hoạt CUDA"
+                    msg = (
+                        "Phát hiện GPU NVIDIA nhưng CUDA chưa hoạt động.\n\n"
+                        "Nguyên nhân thường gặp:\n"
+                        "  - PyTorch cài bản CPU thay vì bản CUDA\n"
+                        "  - Driver NVIDIA chưa cập nhật\n\n"
+                        "Vui lòng mở thư mục cài đặt MagicVoice và chạy lại CaiDat_MagicVoice.bat "
+                        "(hoặc tải lại bộ cài đặt mới nhất và cài đè lên), hoặc liên hệ hỗ trợ: Zalo 0985 483 623"
+                    )
+                    color = P["orange"]
+                    gpu_info = "GPU NVIDIA — CUDA chưa kích hoạt"
+                else:
+                    title = "Khong Co GPU NVIDIA"
+                    msg = (
+                        "May ban dang chay che do CPU.\n\n"
+                        "Anh huong:\n"
+                        "  - Tao voice rat cham (30-60s/cau)\n"
+                        "  - Voice Clone co the khong on dinh\n\n"
+                        "Goi y:\n"
+                        "  - Dung Edge TTS cho van ban dai\n"
+                        "  - Chi dung MagicVoice cho doan ngan\n"
+                        "  - Upgrade GPU NVIDIA de dung tot hon"
+                    )
+                    color = P["red"]
+                    gpu_info = "Khong co GPU NVIDIA"
                 show_edge_btn = True
+                show_repair_btn = _has_nvidia_hw
             else:
                 vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
                 gpu_name = torch.cuda.get_device_name(0)
@@ -4507,6 +7580,7 @@ class App(tk.Tk):
                 color = P["orange"]
                 gpu_info = f"{gpu_name} ({vram:.1f}GB)"
                 show_edge_btn = True
+                show_repair_btn = False
 
             dlg = tk.Toplevel(self)
             dlg.title("Thong Tin Cau Hinh")
@@ -4559,6 +7633,231 @@ class App(tk.Tk):
         # Refresh clone voice tab và sidebar
         self._refresh_voices()
         self._update_sidebar()
+
+    def _clear_srt_preview(self):
+        """Xoa preview SRT khi paste kịch ban moi."""
+        self.srt_entries = []
+        self.srt_tree.delete(*self.srt_tree.get_children())
+        if hasattr(self, "srt_cnt_lbl"):
+            self.srt_cnt_lbl.config(text="0 câu")
+
+    # ── Hệ thống đa phiên ──────────────────────────────────────────
+    _SESSIONS_DIR = Path(__file__).parent / "sessions"
+
+    def _save_session(self, srt_text: str, voice_name: str, out_dir: str):
+        """Luu phien SRT vao sessions/."""
+        import json as _json, time as _time
+        try:
+            self._SESSIONS_DIR.mkdir(exist_ok=True)
+            ts = int(_time.time())
+            data = {
+                "tab": "srt",
+                "timestamp": ts,
+                "line_count": len([l for l in srt_text.splitlines() if l.strip()]),
+                "srt_text":   srt_text,
+                "voice_name": voice_name,
+                "out_dir":    out_dir,
+                "gap_ms":     self.gap_var.get(),
+            }
+            f = self._SESSIONS_DIR / f"session_{ts}.json"
+            f.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as _e:
+            print(f"[Session] Luu that bai: {_e}")
+
+    def _save_batch_session(self):
+        """Luu phien Hang Loat vao sessions/."""
+        import json as _json, time as _time
+        try:
+            self._SESSIONS_DIR.mkdir(exist_ok=True)
+            ts = int(_time.time())
+            files = list(getattr(self, "_txt_files", []))
+            data = {
+                "tab": "batch",
+                "timestamp": ts,
+                "line_count": len(files),
+                "files":   files,
+                "in_dir":  self.in_dir.get(),
+                "out_dir": self.out_dir_var.get(),
+                "voice_name": self.lib.profiles[self.sel_idx].name if 0 <= self.sel_idx < len(self.lib.profiles) else "",
+            }
+            f = self._SESSIONS_DIR / f"session_{ts}.json"
+            f.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as _e:
+            print(f"[Session] Luu batch that bai: {_e}")
+
+    def _recall_session(self, tab_filter=None):
+        """Mo dialog chon phien de goi lai."""
+        import json as _json, datetime as _dt
+        import tkinter.ttk as _ttk
+        self._SESSIONS_DIR.mkdir(exist_ok=True)
+        files = sorted(self._SESSIONS_DIR.glob("session_*.json"), reverse=True)
+        if tab_filter:
+            filtered = []
+            for f in files:
+                try:
+                    d = _json.loads(f.read_text(encoding="utf-8"))
+                    if d.get("tab") == tab_filter:
+                        filtered.append(f)
+                except: pass
+            files = filtered
+        if not files:
+            messagebox.showinfo("Không có phiên", "Chưa có phiên nào được lưu.")
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Chọn phiên")
+        dlg.resizable(True, True)
+        dlg.grab_set()
+        dlg.configure(bg=P["white"])
+        dlg.geometry("560x420")
+        dlg.minsize(460, 340)
+
+        tk.Label(dlg, text="📁  Chọn phiên để tải lại",
+                 font=(FN, 11, "bold"), bg=P["white"], fg=P["purple"]
+                 ).pack(anchor="w", padx=16, pady=(14, 8))
+
+        # Buttons — đặt TRƯỚC treeview để pack bottom trước
+        btn_row = tk.Frame(dlg, bg=P["white"])
+        btn_row.pack(side="bottom", pady=12, fill="x", padx=14)
+
+        # Treeview
+        frm = tk.Frame(dlg, bg=P["white"]); frm.pack(fill="both", expand=True, padx=14, pady=(0,4))
+        vsb = tk.Scrollbar(frm); vsb.pack(side="right", fill="y")
+        cols = ("name", "task", "time")
+        tree = _ttk.Treeview(frm, columns=cols, show="headings",
+                              yscrollcommand=vsb.set, height=8)
+        tree.heading("name", text="Phiên")
+        tree.heading("task", text="Tác vụ")
+        tree.heading("time", text="Thời gian")
+        tree.column("name", width=210)
+        tree.column("task", width=90, anchor="center")
+        tree.column("time", width=170, anchor="center")
+        tree.pack(side="left", fill="both", expand=True)
+        vsb.config(command=tree.yview)
+
+        session_map = {}
+        for f in files:
+            try:
+                d = _json.loads(f.read_text(encoding="utf-8"))
+                ts = d.get("timestamp", 0)
+                dt_str = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+                lc = d.get("line_count", 0)
+                tab = d.get("tab", "srt")
+                task_str = f"{lc} dòng" if tab == "srt" else f"{lc} file"
+                iid = tree.insert("", "end", values=(f.name, task_str, dt_str))
+                session_map[iid] = (f, d)
+            except: pass
+        if tree.get_children():
+            tree.selection_set(tree.get_children()[0])
+
+        def _do_load():
+            sel = tree.selection()
+            if not sel: return
+            f, d = session_map[sel[0]]
+            dlg.destroy()
+            self._restore_session(d)
+
+        def _do_excel():
+            try:
+                import openpyxl as _xl
+                wb = _xl.Workbook(); ws = wb.active
+                ws.title = "Phiên làm việc"
+                ws.append(["Phiên", "Tab", "Tác vụ", "Thời gian", "Voice", "Output"])
+                import datetime as _dt2
+                for iid, (f, d) in session_map.items():
+                    ts = d.get("timestamp", 0)
+                    dt_s = _dt2.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+                    ws.append([f.name, d.get("tab",""), d.get("line_count",0), dt_s,
+                                d.get("voice_name",""), d.get("out_dir","")])
+                out_xl = self._SESSIONS_DIR / "sessions_export.xlsx"
+                wb.save(out_xl)
+                import subprocess; subprocess.Popen(["explorer", str(self._SESSIONS_DIR)])
+                messagebox.showinfo("Xuất Excel", f"Đã lưu:\n{out_xl}")
+            except ImportError:
+                messagebox.showerror("Thiếu thư viện", "Cần cài openpyxl:\npip install openpyxl")
+            except Exception as _xe:
+                messagebox.showerror("Lỗi", str(_xe))
+
+        tk.Button(btn_row, text="✓ Tải", command=_do_load,
+                  font=(FN,10,"bold"), bg=P["purple"], fg="white",
+                  relief="flat", cursor="hand2", padx=20, pady=6
+                  ).pack(side="left", padx=6)
+        tk.Button(btn_row, text="📊 Xuất Excel", command=_do_excel,
+                  font=(FN,9), bg=P["hover"], fg=P["label"],
+                  relief="flat", cursor="hand2", padx=12, pady=6
+                  ).pack(side="left", padx=6)
+        tk.Button(btn_row, text="Hủy", command=dlg.destroy,
+                  font=(FN,9), bg=P["hover"], fg=P["label"],
+                  relief="flat", cursor="hand2", padx=12, pady=6
+                  ).pack(side="left", padx=6)
+        tree.bind("<Double-1>", lambda e: _do_load())
+
+    def _restore_session(self, data: dict):
+        """Phuc hoi trang thai tu session data."""
+        tab = data.get("tab", "srt")
+        # Chon voice
+        vname = data.get("voice_name", "")
+        for i, vp in enumerate(self.lib.profiles):
+            if vp.name == vname:
+                self.sel_idx = i
+                # FIX v3.68 (theo anh Bac bao loi 2026-07-26): truoc day CHI
+                # doi self.sel_idx, KHONG dong bo lai self.tts_mode (sidebar)
+                # theo dung mode cua preset vua khoi phuc - neu dang o mode
+                # "fast"/"edge" ma goi lai 1 phien MagicVoice (hoac nguoc
+                # lai), sidebar/cac tab se hien SAI mode so voi giong vua
+                # khoi phuc. Dong bo dung nhu pattern click() preset o
+                # _update_sidebar().
+                if vp.mode == "edge" and vp.instruct.startswith("edge:"):
+                    if hasattr(self, "edge_voice_var"):
+                        self.edge_voice_var.set(vp.instruct.replace("edge:","").strip())
+                    self._set_tts_mode("edge")
+                elif vp.mode == "fast" and vp.instruct.startswith("fast:"):
+                    if hasattr(self, "fast_voice_var"):
+                        self.fast_voice_var.set(vp.instruct.replace("fast:","").strip())
+                    self._set_tts_mode("fast")
+                else:
+                    self._set_tts_mode("omnivoice")
+                self._update_sidebar()
+                if hasattr(self, "_refresh_srt_voices"):
+                    self._refresh_srt_voices()
+                break
+        # Dat output dir
+        if data.get("out_dir"):
+            self.out_dir_var.set(data["out_dir"])
+
+        if tab == "srt":
+            # Chuyen sang tab SRT
+            self._switch_tab("srt")
+            # Dien lai SRT editor
+            srt_text = data.get("srt_text", "")
+            self.srt_editor.delete("1.0", "end")
+            self.srt_editor.insert("1.0", srt_text)
+            if "gap_ms" in data:
+                self.gap_var.set(data["gap_ms"])
+            # Parse lai
+            txt = srt_text.strip()
+            if "-->" in txt:
+                self._load_srt_content(txt, "phien cu")
+            elif txt:
+                self._text_to_srt_entries(txt)
+            self._st("✅ Đã gọi lại phiên SRT — nhấn Tạo để tạo voice", P["green"])
+
+        elif tab == "batch":
+            # Chuyen sang tab Hang Loat
+            self._switch_tab("batch")
+            files = data.get("files", [])
+            if data.get("in_dir"):
+                self.in_dir.set(data["in_dir"])
+            # Load lai file list
+            if hasattr(self, "_txt_files"):
+                self._txt_files = [f for f in files if Path(f).exists()]
+                self.batch_lb.delete(0, "end")
+                for f in self._txt_files:
+                    sz = Path(f).stat().st_size / 1024
+                    ext = Path(f).suffix.upper().replace(".", "")
+                    self.batch_lb.insert("end", f"  [{ext}]  {Path(f).name:<42} {sz:.1f} KB")
+                self.batch_cnt.config(text=f"{len(self._txt_files)} file")
+            self._st("✅ Đã gọi lại phiên Hàng Loạt — nhấn Chạy để tạo voice", P["green"])
 
     # ─────── CLOSE & CONFIG ────────────────────────────────────────
     def _done_notify_srt(self, out_path: str, parts_dir: str):
@@ -4620,16 +7919,29 @@ class App(tk.Tk):
         """Thông báo hoàn thành + nút mở thư mục."""
         name = Path(out_path).name
         folder = str(Path(out_path).parent)
-        size_kb = int(Path(out_path).stat().st_size / 1024) if Path(out_path).exists() else 0
+        file_ok = Path(out_path).exists()
+        size_kb = int(Path(out_path).stat().st_size / 1024) if file_ok else 0
 
         dlg = tk.Toplevel(self)
-        dlg.title("✅ Hoàn thành!")
+        dlg.title("✅ Hoàn thành!" if file_ok else "⚠ Lỗi lưu file")
         dlg.geometry("420x200")
         dlg.configure(bg=P["white"])
         dlg.resizable(False, False)
         dlg.grab_set()
         dlg.lift()
         dlg.focus_force()
+
+        if not file_ok:
+            tk.Label(dlg, text="⚠  Không tìm thấy file output!",
+                     font=(FN,12,"bold"), bg="#fff7ed", fg="#c2410c",
+                     pady=10).pack(fill="x")
+            tk.Label(dlg, text="ffmpeg chưa cài đủ — chạy lại CaiDat_MagicVoice.bat (trong thư mục cài đặt) để sửa.",
+                     font=(FN,9), bg=P["white"], fg=P["sub"],
+                     wraplength=380, pady=4).pack()
+            tk.Button(dlg, text="Đóng", command=dlg.destroy,
+                      font=(FN,10), bg=P["hover"], fg=P["label"],
+                      relief="flat", cursor="hand2", padx=14, pady=6).pack(pady=12)
+            return
 
         tk.Label(dlg, text="✅  Tạo voice thành công!",
                  font=(FN,12,"bold"), bg="#f0fdf4", fg="#16a34a",
@@ -4683,6 +7995,12 @@ class App(tk.Tk):
             import time
             HEARTBEAT_INTERVAL = 120  # 2 phut
             MAX_FAIL = 3              # cho phep 3 lan fail truoc khi kick
+            # FIX v3.66 (bao mat 2026-07-24): nguong mat ket noi LIEN TUC toi
+            # server truoc khi bat buoc dong app - xem ghi chu day du o
+            # __init__ (_heartbeat_offline_since). 8 tieng theo yeu cau anh
+            # Bac: du de khong lam phien khach mat mang tam thoi trong ngay
+            # lam viec, nhung khong de "chan mang vinh vien" chay app mai mai.
+            OFFLINE_TOO_LONG_SEC = 8 * 3600
             while not self._heartbeat_stop:
                 # Doi 2 phut moi lan check (chia nho de stop nhanh khi close app)
                 for _ in range(HEARTBEAT_INTERVAL):
@@ -4691,6 +8009,7 @@ class App(tk.Tk):
                     time.sleep(1)
                 if self._heartbeat_stop:
                     return
+                _reachable = False
                 try:
                     from auth_manager import check_session_alive, get_session_token
                     token = get_session_token(self._username)
@@ -4703,7 +8022,7 @@ class App(tk.Tk):
                         self.after(0, lambda m=msg: self._kick_user_out(m))
                         return
                     elif status == "error":
-                        # Loi mang/server -> tang counter, KHONG kick
+                        # Loi mang/server -> tang counter, KHONG kick ngay
                         self._heartbeat_fail_count += 1
                         if self._heartbeat_fail_count >= MAX_FAIL:
                             try:
@@ -4715,11 +8034,83 @@ class App(tk.Tk):
                     else:
                         # OK -> reset counter
                         self._heartbeat_fail_count = 0
+                        _reachable = True
                 except Exception:
-                    # Loi bat ngo -> KHONG kick
+                    # Loi bat ngo (vd import that bai, DNS fail) -> KHONG kick,
+                    # nhung van tinh la "khong lien lac duoc" cho bo dem thoi
+                    # gian offline lien tuc ben duoi.
                     pass
+
+                if _reachable:
+                    self._heartbeat_offline_since = None
+                    self._heartbeat_offline_prompted = False
+                else:
+                    if self._heartbeat_offline_since is None:
+                        self._heartbeat_offline_since = time.time()
+                    _offline_dur = time.time() - self._heartbeat_offline_since
+                    if _offline_dur >= OFFLINE_TOO_LONG_SEC and not self._heartbeat_offline_prompted:
+                        self._heartbeat_offline_prompted = True
+                        self.after(0, self._show_offline_too_long_warning)
         t = threading.Thread(target=_hb_loop, daemon=True)
         t.start()
+
+    def _show_offline_too_long_warning(self):
+        """FIX v3.66 (bao mat 2026-07-24): hien khi mat ket noi LIEN TUC toi
+        server qua 8 tieng - khong tu dong dong app ngay (tranh dong oan khi
+        khach dang lam viec that su, chi la mang cham/server Render dang
+        khoi dong lai). Hien canh bao ro rang + dem nguoc; neu khach KHONG
+        bam nut trong vai phut (chung to khong ai dang ngoi may that su theo
+        doi) thi tu dong dong app - khach can dung se mo lai + dang nhap lai
+        (luc do se goi lai server that su)."""
+        if getattr(self, "_offline_warn_win", None) is not None:
+            return  # Da dang hien, khong tao trung
+        GRACE_SEC = 300  # 5 phut de khach phan hoi truoc khi tu dong dong
+
+        win = tk.Toplevel(self)
+        self._offline_warn_win = win
+        win.title("Mất kết nối kéo dài")
+        win.geometry("420x220")
+        win.configure(bg="#1a1d2e")
+        win.attributes("-topmost", True)
+        win.protocol("WM_DELETE_WINDOW", lambda: None)  # bat khach bam nut, khong cho X
+
+        tk.Label(win, text="⚠ Mất kết nối tới server đã hơn 8 giờ",
+                 font=("Segoe UI", 11, "bold"), bg="#1a1d2e", fg="#fbbf24",
+                 wraplength=380, justify="left").pack(padx=16, pady=(16, 6), anchor="w")
+        tk.Label(win,
+                 text="Vui lòng kiểm tra lại kết nối mạng.\n"
+                      "Nếu bạn không phản hồi, ứng dụng sẽ tự đóng để đảm bảo\n"
+                      "phiên đăng nhập được xác thực lại đúng quy định.",
+                 font=("Segoe UI", 9), bg="#1a1d2e", fg="#c8cae0",
+                 wraplength=380, justify="left").pack(padx=16, pady=(0, 10), anchor="w")
+        cd_var = tk.StringVar()
+        tk.Label(win, textvariable=cd_var, font=("Segoe UI", 9), bg="#1a1d2e", fg="#ef4444").pack(anchor="w", padx=16)
+
+        def _dismiss():
+            self._heartbeat_offline_since = None
+            self._heartbeat_offline_prompted = False
+            self._offline_warn_win = None
+            try: win.destroy()
+            except Exception: pass
+
+        tk.Button(win, text="Tôi vẫn ở đây, tiếp tục dùng", command=_dismiss,
+                  bg="#4f72f5", fg="white", relief="flat", padx=12, pady=6,
+                  cursor="hand2").pack(padx=16, pady=(10, 16), anchor="w")
+
+        _deadline = time.time() + GRACE_SEC
+        def _tick():
+            if getattr(self, "_offline_warn_win", None) is not win:
+                return  # da dismiss hoac app dang dong
+            remain = int(_deadline - time.time())
+            if remain <= 0:
+                self._offline_warn_win = None
+                try: win.destroy()
+                except Exception: pass
+                self._on_close()
+                return
+            cd_var.set(f"Tự động đóng sau {remain}s nếu không phản hồi...")
+            win.after(1000, _tick)
+        _tick()
 
     def _kick_user_out(self, msg: str):
         """Bi server day ra do may khac da login. Logout + dong app."""
@@ -4764,20 +8155,22 @@ class App(tk.Tk):
         except Exception:
             pass
         save_config({
-            "device":       self.device_var.get(),
-            "dtype":        self.dtype_var.get(),
-            "steps":        self.steps_var.get(),
-            "out_dir":      self.out_dir_var.get(),
-            "fmt":          self.fmt_var.get(),
-            "auto_load":    True,
-            "model_cached": self.model_loaded or self._cfg.get("model_cached", False),
-            "post_process": self.post_proc_var.get(),
-            "narrator_mode": self.narrator_var.get(),
-            "script_proc": self.script_proc_var.get(),
-            "text_process": self.text_proc_var.get(),
-            "sel_voice_idx": self.sel_idx,
-            "sel_voice_name": self.lib.profiles[self.sel_idx].name
-                              if self.sel_idx < len(self.lib.profiles) else "",
+            "device":           self.device_var.get(),
+            "dtype":            self.dtype_var.get(),
+            "steps":            self.steps_var.get(),
+            "preset_detected":  self._cfg.get("preset_detected", False),
+            "out_dir":          self.out_dir_var.get(),
+            "fmt":              self.fmt_var.get(),
+            "auto_load":        True,
+            "model_cached":     self.model_loaded or self._cfg.get("model_cached", False),
+            "post_process":     self.post_proc_var.get(),
+            "narrator_mode":    self.narrator_var.get(),
+            "script_proc":      self.script_proc_var.get(),
+            "text_process":     self.text_proc_var.get(),
+            "srt_timeline_export": self.srt_timeline_var.get(),
+            "sel_voice_idx":    self.sel_idx,
+            "sel_voice_name":   self.lib.profiles[self.sel_idx].name
+                                if self.sel_idx < len(self.lib.profiles) else "",
             **_name_cfg,
         })
         self.lib.save()  # Đảm bảo lưu voices trước khi đóng
@@ -4785,24 +8178,112 @@ class App(tk.Tk):
         self._heartbeat_stop = True
         self.destroy()
 
+    def _on_model_cfg_changed(self, *_):
+        """Auto-save khi user tu tay doi dtype hoac steps."""
+        self._cfg.update({
+            "dtype": self.dtype_var.get(),
+            "steps": self.steps_var.get(),
+            "preset_detected": True,
+        })
+        save_config(self._cfg)
+
+    def _on_device_changed(self, *_):
+        """Trace callback: khi doi device dropdown → tu dong reload model neu can."""
+        if Backend._loaded_device is None:
+            return  # Model chua load lan nao, khong can reload
+        new_device = self.device_var.get()
+        if not new_device or new_device == Backend._loaded_device:
+            return  # Khong doi gi
+        if self.is_running:
+            self._log(f"⚠ Device → {new_device}: se ap dung sau khi tao xong", "warn")
+            return
+        self._log(f"🔄 Device {Backend._loaded_device} → {new_device}: reload model…", "info")
+        self._load_model()
+
     def _auto_load_model(self):
         """Tự động tải model khi khởi động (đã cache)."""
         self._log("🔄 Tự động tải model (đã cache sẵn)…", "info")
         self._load_model()
 
     # ─────── MODEL ─────────────────────────────────────────────────
+    def _find_local_model_snapshot(self):
+        """Tim snapshot OmniVoice trong HF cache — tranh contact Hub khi da co local."""
+        import shutil as _sh, json as _json
+        try:
+            _cache = Path.home() / ".cache" / "huggingface" / "hub" / \
+                     "models--k2-fsa--OmniVoice" / "snapshots"
+            if not _cache.exists():
+                return None
+            best_full = None
+            best_part = None
+            for snap in _cache.iterdir():
+                if not snap.is_dir():
+                    continue
+                has_w = (snap / "model.safetensors").exists()
+                has_c = (snap / "config.json").exists()
+                if has_w and has_c:
+                    best_full = snap
+                    break
+                elif has_w:
+                    best_part = snap
+            chosen = best_full or best_part
+            if chosen is None:
+                return None
+            if not (chosen / "config.json").exists():
+                for snap2 in _cache.iterdir():
+                    if snap2 == chosen or not snap2.is_dir():
+                        continue
+                    if (snap2 / "config.json").exists():
+                        try:
+                            for _jf in snap2.glob("*.json"):
+                                _dst = chosen / _jf.name
+                                if not _dst.exists():
+                                    _sh.copy2(str(_jf), str(_dst))
+                        except Exception:
+                            pass
+                        break
+            # Validate config.json — neu rong hoac thieu model_type → tu va lai
+            _cfg_path = chosen / "config.json"
+            if _cfg_path.exists():
+                try:
+                    _cfg_data = _json.loads(_cfg_path.read_text("utf-8"))
+                    if not _cfg_data.get("model_type"):
+                        _cfg_data["model_type"] = "omnivoice"
+                        _cfg_path.write_text(
+                            _json.dumps(_cfg_data, ensure_ascii=False, indent=2), "utf-8")
+                        self._log("⚠ config.json thiếu model_type — tự vá → omnivoice", "warn")
+                except Exception:
+                    # File bi hong hoan toan → viet lai config toi thieu
+                    try:
+                        _cfg_path.write_text(
+                            _json.dumps({"model_type": "omnivoice"}, indent=2), "utf-8")
+                        self._log("⚠ config.json hỏng — đã ghi lại tối thiểu", "warn")
+                    except Exception:
+                        pass
+            return str(chosen)
+        except Exception:
+            return None
+
     def _load_model(self):
         # Reset để cho phép tải lại
         Backend._model = None
-        # Tự dùng HF mirror nếu chưa set
-        if not os.environ.get("HF_ENDPOINT"):
-            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-            self._log("🌐 Dùng mirror: hf-mirror.com", "info")
         self.load_btn.config(state="disabled", text="⏳ Đang tải…", bg=P["gold"])
         self.model_dot.config(fg=P["gold"])
         self.model_lbl.config(text=" Đang tải…", fg=P["gold"])
         self._log("⏳ Bắt đầu tải MagicVoice (~4GB lần đầu, đã cache = nhanh)…", "info")
+        self._load_timer_active = True
+        self._load_timer_secs = 0
+        self._tick_load_timer()
         threading.Thread(target=self._do_load, daemon=True).start()
+
+    def _tick_load_timer(self):
+        if not getattr(self, "_load_timer_active", False):
+            return
+        m, s = divmod(self._load_timer_secs, 60)
+        self.after(0, lambda mm=m, ss=s: self.model_lbl.config(
+            text=f" Đang tải… ({mm:02d}:{ss:02d})", fg=P["gold"]))
+        self._load_timer_secs += 1
+        self.after(1000, self._tick_load_timer)
 
     def _do_load(self):
         try:
@@ -4811,38 +8292,99 @@ class App(tk.Tk):
             dtype_str= self.dtype_var.get()
             self._log(f"   Device: {device}  |  Dtype: {dtype_str}", "info")
 
-            # Kiem tra model da cache chua
+            # Kiem tra model da cache chua — neu chua: tu dong tai
             if not _model_is_cached():
-                self._log("Model chua co - se tai tu HuggingFace...", "info")
-                self._log("(Su dung mirror hf-mirror.com de tranh bi chan)", "info")
+                self._log("⬇ MagicVoice Engine chưa có — đang tải...", "info")
                 self.after(0, lambda: self.model_lbl.config(
-                    text=" Dang tai model...", fg=P["gold"]))
+                    text=" Đang tải MagicVoice Engine...", fg=P["gold"]))
+                # Thu 1: snapshot_download tu HuggingFace (qua mirror hf-mirror.com)
+                _dl_ok = False
+                import os as _os_dl
+                _os_dl.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+                try:
+                    self._log("   Thử máy chủ tải MagicVoice Engine (hf-mirror.com)...", "info")
+                    from huggingface_hub import snapshot_download as _snd
+                    _snd("k2-fsa/OmniVoice")
+                    _dl_ok = True
+                    self._log("   ✓ Tải MagicVoice Engine xong", "ok")
+                except Exception as _hf_err:
+                    self._log(f"   ✗ Tải thất bại: {_hf_err}", "warn")
+                # Thu 2: fallback Google Drive neu HuggingFace loi
+                if not _dl_ok:
+                    self._log("   Fallback → Google Drive...", "info")
+                    self.after(0, lambda: self.model_lbl.config(
+                        text=" Tải từ Drive...", fg=P["gold"]))
+                    try:
+                        _download_model_from_drive(
+                            log_fn=lambda m, lv="info": self._log(f"   {m}", lv),
+                            progress_fn=lambda pct, msg="": self.after(0, lambda p=pct, t=msg:
+                                self.model_lbl.config(text=f" Drive {p}% {t}", fg=P["gold"]))
+                        )
+                        self._log("   ✓ Tải xong từ Google Drive", "ok")
+                    except Exception as _dr_err:
+                        self._log(f"   ✗ Drive thất bại: {_dr_err}", "err")
+                        raise RuntimeError(
+                            f"Không tải được model!\n\n"
+                            f"HuggingFace: {_hf_err}\nGoogle Drive: {_dr_err}\n\n"
+                            "Kiểm tra internet rồi nhấn Thử lại."
+                        )
 
             from omnivoice import OmniVoice as MagicVoice
             dt = {"float32": torch.float32,
                   "float16": torch.float16,
                   "bfloat16": torch.bfloat16}[dtype_str]
-            # Kiem tra mang truoc khi tai model
-            online = self._is_online()
+            import os as _os
+            # Xoa offline flags truoc — tranh block hub khi can resume/download
+            for _ev in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"):
+                _os.environ.pop(_ev, None)
 
-            if not online:
-                # OFFLINE: Set env vars de tat moi ket noi HuggingFace
-                import os as _os
-                _os.environ["TRANSFORMERS_OFFLINE"] = "1"
-                _os.environ["HF_DATASETS_OFFLINE"] = "1"
-                _os.environ["HF_HUB_OFFLINE"] = "1"
-                self._log("   Offline — Load model tu cache local...", "info")
+            local_path = self._find_local_model_snapshot()
+            if local_path:
+                self._log(f"   Load model tu cache local (khong can mang)...", "info")
+                Backend._model = MagicVoice.from_pretrained(
+                    local_path, device_map=device, dtype=dt)
             else:
-                # ONLINE: Xoa flag offline neu da set truoc do
-                import os as _os
-                _os.environ.pop("TRANSFORMERS_OFFLINE", None)
-                _os.environ.pop("HF_HUB_OFFLINE", None)
-                self._log("   Dang tai model (cache o ~/.cache)...", "info")
-
-            Backend._model = MagicVoice.from_pretrained(
-                "k2-fsa/OmniVoice", device_map=device, dtype=dt)
+                self._log("   Cache trong — tai model qua hf-mirror.com (~4GB)...", "info")
+                self.after(0, lambda: self.model_lbl.config(
+                    text=" Dang tai model (~4GB)…", fg=P["gold"]))
+                _os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+                _dl_ok = False
+                try:
+                    from huggingface_hub import snapshot_download as _snd
+                    _snd("k2-fsa/OmniVoice")
+                    _dl_ok = True
+                    self._log("✓ Tai xong — dang load...", "info")
+                except Exception as _dle:
+                    self._log(f"   ✗ HuggingFace that bai: {_dle}", "warn")
+                if not _dl_ok:
+                    self._log("   Fallback → Google Drive...", "info")
+                    self.after(0, lambda: self.model_lbl.config(
+                        text=" Tai tu Drive...", fg=P["gold"]))
+                    try:
+                        _download_model_from_drive(
+                            log_fn=lambda m, lv="info": self._log(f"   {m}", lv),
+                            progress_fn=lambda pct, msg="": self.after(0, lambda p=pct, t=msg:
+                                self.model_lbl.config(text=f" Drive {p}% {t}", fg=P["gold"]))
+                        )
+                        self._log("✓ Tai xong tu Google Drive — load model...", "info")
+                    except Exception as _dre:
+                        raise RuntimeError(
+                            f"Khong tai duoc model!\n\nGoogle Drive: {_dre}\n\n"
+                            "Kiem tra internet roi nhan Thu lai.")
+                local_path2 = self._find_local_model_snapshot()
+                if local_path2:
+                    Backend._model = MagicVoice.from_pretrained(
+                        local_path2, device_map=device, dtype=dt)
+                else:
+                    Backend._model = MagicVoice.from_pretrained(
+                        "k2-fsa/OmniVoice", device_map=device, dtype=dt)
+            Backend._loaded_device = device
             self.model_loaded = True
+            # Clear offline env sau load — cho OmniVoice download Whisper khi Clone
+            for _ev in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"):
+                _os.environ.pop(_ev, None)
             self._log("✅ Model san sang!", "ok")
+            self._load_timer_active = False
             # Đánh dấu đã cache để lần sau tự động tải
             self._cfg["model_cached"] = True
             save_config({**self._cfg,
@@ -4855,6 +8397,7 @@ class App(tk.Tk):
             self.after(0, self.load_btn.config,
                        {"text": "✓ Đã tải", "bg": P["green"], "state": "disabled"})
         except Exception as e:
+            self._load_timer_active = False
             import traceback
             detail = traceback.format_exc()
             self._log(f"❌ Lỗi: {e}", "err")
@@ -4863,43 +8406,48 @@ class App(tk.Tk):
             self.after(0, self.model_lbl.config, {"text": " Lỗi tải", "fg": P["red"]})
             self.after(0, self.load_btn.config,
                        {"text": "↺ Thử lại", "bg": P["purple"], "state": "normal"})
-            hint = ""
             s = str(e).lower()
-            e_str = str(e)
-            if "getaddrinfo" in s or any(x in s for x in ["connect","timeout","network","ssl","name resolution"]):
-                hint = (
-                    "Loi MANG!\n\n"
-                    "App da tu dung hf-mirror.com.\n"
-                    "Kiem tra internet roi nhan Thu lai."
-                )
-            elif any(x in e_str for x in ["caffe2_nvrtc", "WinError 126", "caffe2_nvrtc.dll"]) or \
-                 ("winerror 126" in s and "dll" in s):
-                hint = (
-                    "Loi DLL: PyTorch CUDA khong tuong thich voi he thong nay!\n\n"
-                    "Cach sua: Cai lai PyTorch phien ban CPU (khong can GPU):\n\n"
-                    "  py -3.11 -m pip uninstall torch torchaudio -y\n"
-                    "  py -3.11 -m pip install torch==2.8.0 torchaudio==2.8.0\n\n"
-                    "Sau do mo lai app va nhan Thu lai."
-                )
-            elif any(x in s for x in ["omnivoice", "magicvoice", "no module"]):
-                hint = (
-                    "Thieu thu vien MagicVoice!\n\n"
-                    "Chay CMD:\n"
-                    "  py -3.11 -m pip install omnivoice\n\n"
-                    "Sau do mo lai app."
-                )
-            elif "module" in s or "dll" in s or "winerror" in s:
-                hint = (
-                    f"Loi thu vien:\n{e_str[:200]}\n\n"
-                    "Cach sua:\n"
-                    "  py -3.11 -m pip uninstall torch torchaudio -y\n"
-                    "  py -3.11 -m pip install torch==2.8.0 torchaudio==2.8.0\n"
-                    "  py -3.11 -m pip install omnivoice\n\n"
-                    "Sau do nhan Thu lai."
-                )
+            _is_cache_miss = ("localentrynotfound" in type(e).__name__.lower() or
+                              ("local cache" in s and "cannot find" in s))
+            # FIX v3.65 (32): "Unrecognized configuration class <NoneType>"
+            # nghia la config.json trong cache model bi hong/khong doc duoc
+            # dung (thuong do model download bi dut giua chung lan truoc) -
+            # thay vi bat khach tu tay xoa cache + chay lai .bat, TU DONG
+            # xoa cache hong + tai lai model NGAY (1 lan) - chuyen nghiep hon,
+            # it truong hop can can thiep tay.
+            _is_bad_config = ("unrecognized configuration class" in s and "nonetype" in s)
+            if _is_bad_config and not getattr(self, "_model_cfg_autofix_done", False):
+                self._model_cfg_autofix_done = True
+                try:
+                    import shutil as _sh2, pathlib as _pl2
+                    _bad_cache = _pl2.Path.home() / ".cache" / "huggingface" / "hub" / "models--k2-fsa--OmniVoice"
+                    if _bad_cache.exists():
+                        _sh2.rmtree(_bad_cache, ignore_errors=True)
+                        self._log("⚠ config.json model bị hỏng (tải dở trước đó) — đã tự xoá cache, đang tải lại...", "warn")
+                    self.after(0, self._load_model)
+                    return
+                except Exception as _fix_err:
+                    self._log(f"Tu dong sua cache model that bai: {_fix_err}", "warn")
+            # Loi mang: chi can retry, khong can sua moi truong
+            # Phai loai tru LocalEntryNotFoundError (co chua "connect" trong message nhung khong phai loi mang)
+            if not _is_cache_miss and ("getaddrinfo" in s or any(x in s for x in ["connect","timeout","network","ssl","name resolution"])):
+                self.after(200, lambda: messagebox.showerror("Lỗi mạng",
+                    "Không kết nối được HuggingFace.\n\nKiểm tra internet rồi nhấn ↺ Thử lại."))
+            elif _is_bad_config:
+                self.after(200, lambda err=str(e): messagebox.showerror("Lỗi tải model",
+                    f"Đã tự xoá cache và tải lại nhưng vẫn lỗi:\n{err[:300]}\n\n"
+                    "Vui lòng:\n"
+                    "1. Kiểm tra kết nối internet ổn định rồi bấm Thử lại\n"
+                    "2. Nếu vẫn lỗi: chạy DonMoiTruong_MagicVoice.bat rồi cài lại\n"
+                    "3. Liên hệ hỗ trợ: Zalo 0985 483 623"))
             else:
-                hint = f"Loi:\n{e_str[:300]}\n\nXem Log de biet chi tiet.\nNhan Thu lai."
-            self.after(200, lambda h=hint: messagebox.showerror("Loi tai model", h))
+                self.after(200, lambda err=str(e): messagebox.showerror("Lỗi tải model",
+                    f"Lỗi tải model:\n{err[:300]}\n\n"
+                    "Vui lòng:\n"
+                    "1. Mở thư mục cài đặt MagicVoice, chạy lại CaiDat_MagicVoice.bat\n"
+                    "   (hoặc tải lại bộ cài đặt MagicVoice_Setup mới nhất và cài đè lên)\n"
+                    "2. Nếu vẫn lỗi: chạy DonMoiTruong_MagicVoice.bat rồi cài lại\n"
+                    "3. Liên hệ hỗ trợ: Zalo 0985 483 623"))
 
     # ─────── CREATE (dispatch) ─────────────────────────────────────
     def _create(self):
@@ -4972,7 +8520,7 @@ class App(tk.Tk):
             #
             # if vp.ref_text and vp.ref_text.strip():
             #     kw["ref_text"] = vp.ref_text
-            self._log("  ✓ Clone mode: chi dung ref_audio, OmniVoice tu xu ly text.", "info")
+            pass  # clone mode silently
         elif vp.mode == "design":
             if not vp.instruct:
                 raise ValueError("Voice Design thiếu mô tả!")
@@ -5109,13 +8657,67 @@ class App(tk.Tk):
 
     def _prepare_ref_audio(self, audio_path: str) -> str:
         """Chuan bi file audio mau cho clone.
-        v3.37: KHONG tu cat ref_audio nua. OmniVoice tu xu ly (preprocess_prompt=True
-        trong Backend.gen): bo silence dau/cuoi + tu chunk neu dai.
-        Tool tu cat cung 30s truoc day la NGUYEN NHAN loi "them chu/lay hoi dau cau"
-        va lam ket qua bat dinh (cung giong, cat khac nhau -> ket qua khac nhau).
-        -> Tra nguyen file, de model tu lam sach theo thuat toan on dinh cua no.
+        FIX (v3.18): KHONG cat 30s nua. omnivoice/F5 chay tot voi 10-90s.
+        Chi cat khi qua 90s de tranh OOM. Giu nguyen nhung gi user da chuan bi.
         """
-        return audio_path
+        try:
+            import torchaudio, torch
+            from pathlib import Path as _P
+            MAX_SEC = 30   # FIX v3.19: ve lai 30s nhu v2.8. 90s qua dai
+                           # khien model "lo loc" tu trong ref audio sang output
+            t, sr = _safe_audio_load(audio_path)
+            dur = t.shape[1] / sr
+            # Khong cat neu trong gioi han -> giu nguyen chat luong clone
+            if dur <= MAX_SEC:
+                return audio_path
+            # Cat khi qua dai (tranh OOM)
+            max_samples = int(MAX_SEC * sr)
+            t_trim = t[:, :max_samples]
+            cache = str(_P(audio_path).with_suffix("")) + "_trim30s.wav"
+            torchaudio.save(cache, t_trim, sr)
+            pass  # trim silently
+            return cache
+        except Exception:
+            return audio_path
+
+    def _trim_sil(self, t, thr=0.01, win_ms=10):
+        """Trim leading/trailing silence dung windowed RMS — chong MP3 codec noise."""
+        import torch as _tc
+        sr = 24000
+        win = max(1, int(win_ms * sr / 1000))
+        s = t.abs().squeeze(0)
+        n = s.shape[0]
+        if n == 0:
+            return t
+        pad = (win - n % win) % win
+        sp = _tc.nn.functional.pad(s, (0, pad))
+        rms = sp.reshape(-1, win).mean(dim=1)
+        active = (rms > thr).nonzero(as_tuple=False)
+        if len(active) == 0:
+            return t
+        start = active[0].item() * win
+        end = min(n, (active[-1].item() + 1) * win)
+        return t[:, start:end]
+
+    def _trim_tail(self, t, thr=0.005, win_ms=20):
+        """Chi trim duoi audio (khong cat dau) — danh cho trailing settling noise cua TTS.
+        thr=0.005 bat duoc muc noise thap hon _trim_sil (0.01) ma model sinh sau tu cuoi.
+        win_ms=20 tranh cat consonant cuoi cau (x, s, t, ...) voi nang luong thap."""
+        import torch as _tc
+        sr = 24000
+        win = max(1, int(win_ms * sr / 1000))
+        s = t.abs().squeeze(0)
+        n = s.shape[0]
+        if n == 0:
+            return t
+        pad = (win - n % win) % win
+        sp = _tc.nn.functional.pad(s, (0, pad))
+        rms = sp.reshape(-1, win).mean(dim=1)
+        active = (rms > thr).nonzero(as_tuple=False)
+        if len(active) == 0:
+            return t
+        end = min(n, (active[-1].item() + 1) * win)
+        return t[:, :end]   # giu nguyen dau, chi cat duoi
 
     def _get_speed(self):
         """Lay toc do: uu tien speed tu voice profile, fallback sidebar."""
@@ -5137,7 +8739,7 @@ class App(tk.Tk):
         return p
 
     def _save(self, tensor, path):
-        """Lưu audio — post-process 1 lần."""
+        """Luu audio. Returns duong dan file thuc su (co the la .wav neu ffmpeg khong co)."""
         import torch
         if hasattr(self, "post_proc_var") and self.post_proc_var.get():
             tensor = _post_process(tensor)
@@ -5146,20 +8748,14 @@ class App(tk.Tk):
             if peak > 0.95:
                 tensor = tensor * (0.891 / peak)
         if path.endswith(".mp3"):
-            try:
-                to_mp3(tensor, path)
-                # Neu MP3 khong tao duoc → fallback WAV
-                if not os.path.exists(path):
-                    wav_path = path.replace(".mp3", ".wav")
-                    to_wav(tensor, wav_path)
-                    # Doi ten path thanh wav
-                    import shutil as _sh
-                    if os.path.exists(wav_path):
-                        path = wav_path
-            except Exception:
-                wav_path = path.replace(".mp3", ".wav")
-                to_wav(tensor, wav_path)
-        else:                     to_wav(tensor, path)
+            result = to_mp3(tensor, path)  # tra ve wav_path neu ffmpeg fallback, None neu OK
+            if result and result != path:
+                self._log(f"⚠ ffmpeg khong co — luu WAV thay MP3: {Path(result).name}", "warn")
+                return result
+            return path
+        else:
+            to_wav(tensor, path)
+            return path
 
     def _del_char_from_text(self, char):
         """Xoa ky tu cu the khoi text box."""
@@ -5192,6 +8788,67 @@ class App(tk.Tk):
         else:
             messagebox.showinfo("Thông báo", "Không có bản sao lưu!")
 
+    def _preview_tts_friendly(self):
+        """Hien dialog so sanh van ban truoc/sau khi Toi uu doc (TTS-friendly).
+        Chi xem, KHONG sua o van ban goc trong o nhap."""
+        txt = self.txt_in.get("1.0", "end-1c").strip()
+        if not txt or txt.startswith("Nhập nội dung"):
+            messagebox.showwarning("Trống", "Hãy nhập văn bản!"); return
+        # FIX v3.66: xem truoc phai khop dung voi luc tao that (Edge TTS
+        # khong tach cau dai - xem ghi chu split_long_sentences)
+        _is_edge_preview = getattr(self, "tts_mode", None) and self.tts_mode.get() == "edge"
+        # FIX v3.66 (audit 2026-07-24): xem truoc phai khop voi _do_text() -
+        # neu dang chon voice clone, TTS-friendly se KHONG duoc ap dung luc
+        # tao that (xem ghi chu o _do_text), nen preview cung phai hien
+        # "khong doi gi" thay vi hien ket qua gia (lam khach tuong se ap
+        # dung nhung thuc te khong).
+        _cur_vp_preview = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+        if _cur_vp_preview and _cur_vp_preview.mode == "clone":
+            messagebox.showinfo(
+                "Voice Clone — không áp dụng",
+                "Giọng đang chọn là Clone Voice.\n\n"
+                "Tối ưu đọc (TTS-friendly) KHÔNG áp dụng cho Clone Voice để giữ "
+                "nguyên 100% văn bản (đúng ngữ điệu/nhịp audio mẫu) — văn bản sẽ "
+                "được đọc y nguyên như bạn nhập, không xem trước gì thêm.")
+            return
+        after = _tts_friendly(txt, split_long_sentences=not _is_edge_preview)
+        # So sanh CHUOI TU THUC SU (chi lay ky tu chu cai, bo qua dau cau/
+        # khoang trang/gach noi) - dung cach nay thay vi dem theo khoang
+        # trang don thuan, vi split-gach-noi ("well-dressed"->"well","dressed")
+        # va bo dau gach dai dung rieng deu lam thay doi SO LUONG TOKEN theo
+        # khoang trang du KHONG mat/doi tu ngu nao thuc su.
+        import re as _re_wc
+        def _words_only(s):
+            return [w.lower() for w in _re_wc.findall(r"[A-Za-zÀ-ỹ]+", s)]
+        _wb, _wa = _words_only(txt), _words_only(after)
+        _same = (_wb == _wa)
+
+        dlg = tk.Toplevel(self)
+        dlg.title("👁 Xem trước — Tối ưu đọc (TTS-friendly)")
+        dlg.geometry("640x520")
+        dlg.configure(bg=P["white"])
+        dlg.transient(self); dlg.grab_set()
+
+        tk.Label(dlg, text=("✓ Giữ nguyên 100% từ ngữ" if _same
+                             else "⚠ CẢNH BÁO: có thể lệch từ ngữ — kiểm tra kỹ trước khi dùng!"),
+                 font=(FN,9,"bold"), bg=P["white"],
+                 fg=P["green"] if _same else P["red"]
+                 ).pack(anchor="w", padx=12, pady=(10,4))
+
+        tk.Label(dlg, text="Sau khi tối ưu (sẽ dùng để tạo voice):",
+                 font=(FN,9,"bold"), bg=P["white"], fg=P["label"]).pack(anchor="w", padx=12)
+        _txt_after = tk.Text(dlg, wrap="word", font=(FN,10), height=16,
+                              bg=P["white"], fg=P["text"], relief="flat",
+                              highlightthickness=1, highlightbackground=P["border"])
+        _txt_after.pack(fill="both", expand=True, padx=12, pady=(2,10))
+        _txt_after.insert("1.0", after)
+        _txt_after.config(state="disabled")
+
+        tk.Button(dlg, text="Đóng", command=dlg.destroy,
+                  font=(FN,9,"bold"), bg=P["purple"], fg="white",
+                  relief="flat", cursor="hand2", padx=16, pady=6
+                  ).pack(pady=(0,12))
+
     @staticmethod
     def _clean_text_for_tts(txt):
         """Lam sach van ban truoc khi dua vao TTS."""
@@ -5218,6 +8875,28 @@ class App(tk.Tk):
         txt = self._clean_text_for_tts(txt)
         if not txt:
             messagebox.showwarning("Trống","Văn bản trống sau khi làm sạch!"); return
+        # Toi uu doc (TTS-friendly): chi ap dung tren BAN SAO ngay truoc khi
+        # tao voice - KHONG sua o van ban goc trong o nhap cua khach.
+        # FIX v3.66: Edge TTS khong tach cau dai (rule B) - Edge khong bi
+        # "vap" cau dai nhu MagicVoice, tach them dau cham chi lam Edge tu
+        # nghi lau hon khong can thiet (khach bao "sau dau cham nghi lau").
+        # FIX v3.66 (audit 2026-07-24, theo yeu cau anh Bac): TRUOC DAY ap
+        # dung TTS-friendly GIONG HET cho ca mode="clone" va mode="design" -
+        # day la nguyen nhan "tieng la" ngau nhien khach bao khi dung voice
+        # clone (clone can giu NGUYEN VAN 100% van ban de dung ngu dieu/nhip
+        # cua audio mau, moi thay doi cau truc du nho - tach cau, doi gach
+        # noi - co the lam lech alignment audio-text ma model clone dua vao).
+        # Khach hang da xac nhan dung tool cho nhieu ngon ngu (chu yeu Anh,
+        # ngoai ra Tay Ban Nha/Nhat/Phap/Han/Thai...) - Rule B chi nhan dien
+        # lien tu tieng Anh nen chi anh huong ro nhat o van ban tieng Anh,
+        # nhung Rule A (bo gach noi)/Rule C (chuan hoa khoang trang) van doi
+        # van ban cho MOI ngon ngu - nen tat CA TTS-friendly (khong chi Rule
+        # B) cho rieng mode=clone, giu nguyen cho mode=design.
+        _cur_vp_txt = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+        _is_clone_mode_txt = bool(_cur_vp_txt and _cur_vp_txt.mode == "clone")
+        if getattr(self, "tts_friendly_var", None) and self.tts_friendly_var.get() and not _is_clone_mode_txt:
+            _is_edge_mode = self.tts_mode.get() == "edge"
+            txt = _tts_friendly(txt, split_long_sentences=not _is_edge_mode)
         # Lock se tu dong ngan thread moi neu thread cu van dang gen()
         # Khong can check thu cong nua
 
@@ -5231,6 +8910,8 @@ class App(tk.Tk):
         mode = self.tts_mode.get()
         if mode == "edge":
             t = threading.Thread(target=self._run_edge_text,args=(txt,),daemon=True)
+        elif mode == "fast":
+            t = threading.Thread(target=self._run_fast_text,args=(txt,),daemon=True)
         else:
             t = threading.Thread(target=self._run_text,args=(txt,),daemon=True)
         self._gen_thread = t
@@ -5279,7 +8960,18 @@ class App(tk.Tk):
         Dung session cache nen goi nhieu lan khong chậm."""
         _u = getattr(self, "_username", "")
         if not _u:
-            return True  # Khong co username → khong check (luc init)
+            # FIX (bao mat 2026-08-14): TRUOC DAY return True (bo qua kiem tra)
+            # o day - day chinh la lo hong khach dung tool free vinh vien neu
+            # username bi rong (vd tung phu thuoc file cache co the trong).
+            # Gio fail-CLOSED dung triet ly cua chinh license_guard.py: khong
+            # xac dinh duoc user -> TU CHOI, khong cho tao voice.
+            self.after(0, lambda: messagebox.showerror(
+                "License không hợp lệ",
+                "Không xác định được tài khoản đăng nhập.\n\n"
+                "Vui lòng khởi động lại app và đăng nhập lại.\n"
+                "Hỗ trợ: Zalo 0985 483 623",
+                parent=self))
+            return False
         try:
             ok, msg = _check_license_gs(_u)
         except Exception as e:
@@ -5311,54 +9003,26 @@ class App(tk.Tk):
             import torch, re as _re
             kw    = self._vkw()
             vp    = self.lib.profiles[self.sel_idx] if self.sel_idx < len(self.lib.profiles) else None
-            vname = vp.name if vp else "Auto"
+            vname = vp.name if vp else ""
             steps = self.steps_var.get()
             speed = self._get_speed()  # Uu tien speed tu voice profile
             SR    = 24000
 
             # ── Tách text thành chunks tối ưu ───────────────────────
-            def make_chunks(text, max_chars=450):
-                """Tách tại dấu câu, mỗi chunk ~max_chars ký tự.
-                Đoạn văn (ngăn bởi dòng trống) → pause dài hơn giữa các đoạn.
-                FIX: giam pause cho mat, sat voi Edge TTS hon."""
-                final = []
-                for para in text.split("\n\n"):
-                    para = para.strip()
-                    if not para: continue
-                    sub = make_chunks_para(para, max_chars)
-                    if sub:
-                        final.extend(sub[:-1])
-                        last_txt, _ = sub[-1]
-                        # FIX: giam tu 800ms -> 500ms (sat Edge TTS 700ms - bao gom trim audio)
-                        final.append((last_txt, 500))
-                if final:
-                    t, _ = final[-1]
-                    final[-1] = (t, 0)
-                return final
-
-            def make_chunks_para(text, max_chars=450):
-                sents = _re.split(r"(?<=[.!?])\s+", text.strip())
-                result = []
-                buf = ""
-                for s in sents:
-                    s = s.strip()
-                    if not s: continue
-                    if not buf:
-                        buf = s
-                    elif len(buf) + 1 + len(s) <= max_chars:
-                        buf += " " + s
-                    else:
-                        last = buf.rstrip()[-1:]
-                        # FIX: giam pause - sau dau cau .!? = 350ms (cu 600ms)
-                        # sau dau , ; = 200ms (cu 300ms)
-                        pause = 350 if last in ".!?" else 200
-                        result.append((buf, pause))
-                        buf = s
-                if buf:
-                    result.append((buf, 0))
-                return result
-
-            chunks = make_chunks(txt)
+            # Dung _smart_chunks: max_ch=280 (duoi nguong 375 OmniVoice), pause thong minh
+            # 350ms sau .!? (sentence), 100ms sau ,; (clause), 500ms giua doan van (\n\n)
+            _paras = [p.strip() for p in txt.split("\n\n") if p.strip()]
+            chunks = []
+            for _pi, _para in enumerate(_paras):
+                _pc = _smart_chunks(_para, SR)
+                if not _pc:
+                    continue
+                # Tat ca chunk trong doan: giu pause cua _smart_chunks
+                for _ct, _cm in _pc[:-1]:
+                    chunks.append((_ct, _cm))
+                # Chunk cuoi doan: 500ms giua doan (tru doan cuoi cung)
+                _last_t, _ = _pc[-1]
+                chunks.append((_last_t, 500 if _pi < len(_paras) - 1 else 0))
             if not chunks:
                 chunks = [(txt.strip(), 0)]
 
@@ -5366,8 +9030,28 @@ class App(tk.Tk):
             self._log(f"🎙 {vname} | Steps:{steps} | Speed:{speed:.1f}x | {total} chunks | {len(txt)} ký tự", "info")
             self.after(0, lambda: self.pb.configure(mode="determinate", value=0))
 
+            # Tạo thư mục output trước khi gen để lưu từng chunk ngay
+            out_d = self.out_dir_var.get()
+            os.makedirs(out_d, exist_ok=True)
+            _fname = self._next_out_name_single("")
+            try:
+                if self.out_ask_name_var.get():
+                    _v = self._ask_output_filename(_fname, "Tab Văn Bản")
+                    if _v and _v.strip():   _fname = _v.strip()
+                    elif _v is None:        self._log("⏭ Dùng tên mặc định", "warn")
+            except Exception:
+                pass
+            _out_folder = os.path.join(out_d, _fname)
+            os.makedirs(_out_folder, exist_ok=True)
+            self._log(f"📁 {_out_folder}", "info")
+
             # ── Đọc từng chunk & nối ────────────────────────────────
             parts = []
+            # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): [(text, dur_giay)]
+            # cho tung chunk THANH CONG - dung xuat .srt timeline sau, dur da
+            # gom ca khoang lang pause_ms (neu co) vi no la 1 phan "thoi
+            # gian thuc" giua noi dung, giong cach _run_srt xu ly gap.
+            _srt_timeline_data = []
             for ci, (chunk_txt, pause_ms) in enumerate(chunks):
                 if self.cancel_ev.is_set():
                     self._log("⏹ Đã hủy", "warn"); return
@@ -5390,8 +9074,9 @@ class App(tk.Tk):
                 #   - Bản BO TU thuong NGAN HON expected -> deviation NHO -> bi chon
                 #   - Ket qua: chon nham ban bo tu lam ket qua chinh thuc!
                 # Theo doc OmniVoice, model gen 1 lan voi guidance_scale=2.0 da on dinh.
-                a = Backend.gen(chunk_txt, num_step=steps, speed=speed, **kw)
-                audio_t = _to_tensor(a)
+                # _gen_verified: gen + Whisper verify + auto-retry neu phat am sai
+                audio_t, _vok, _vtr = _gen_verified(
+                    chunk_txt, steps, speed, kw, log_fn=self._log)
 
                 elapsed = time.time() - t0
 
@@ -5400,10 +9085,23 @@ class App(tk.Tk):
                     continue
                 self._log(f"  [{ci+1}/{total}] {elapsed:.1f}s | {chunk_txt[:40]}", "info")
 
-                parts.append(audio_t)  # no trim - avoid cutting speech
+                audio_t = self._trim_sil(audio_t)   # trim model padding per chunk
+                parts.append(audio_t)
+
+                # FIX: tab Van Ban CHI xuat 1 file hoan chinh - khong luu
+                # tung chunk rieng (voice le chi danh cho tab SRT, noi moi
+                # dong = 1 don vi noi dung rieng biet co timing). Truoc day
+                # code nay luu tung chunk ({ci+1:03d}.mp3) vao _out_folder
+                # ngay ca khi chi doc van ban thuong, gay nham lan voi
+                # "voice le" cua SRT.
+
+                _chunk_dur = audio_t.shape[-1] / SR
+
                 # Thêm im lặng giữa các chunk
                 if pause_ms > 0:
                     parts.append(torch.zeros(1, int(pause_ms * SR / 1000)))
+                    _chunk_dur += pause_ms / 1000.0
+                _srt_timeline_data.append((chunk_txt, _chunk_dur))
 
             # ── Nối tất cả trong RAM ─────────────────────────────────
             if not parts:
@@ -5419,49 +9117,40 @@ class App(tk.Tk):
                     "Xem Log phia duoi de biet chi tiet loi."
                 )
             self._log("🔗 Nối các đoạn trong RAM…", "info")
-            final = torch.cat(parts, dim=1)
+            final = _concat_crossfade(parts, sr=SR if 'SR' in dir() else 24000, fade_ms=15)
+            final = self._trim_tail(final)   # cat trailing settling noise cuoi toan bo audio
 
-            # Lưu - kiểm tra thư mục output tồn tại
-            out_d = self.out_dir_var.get()
+            # Lưu file ghép tổng vào thư mục đã tạo
             try:
-                os.makedirs(out_d, exist_ok=True)
-            except Exception as _dir_err:
-                raise RuntimeError(
-                    f"Khong tao duoc thu muc luu:\n{out_d}\n\n"
-                    f"Loi: {_dir_err}\n\n"
-                    "Vui long chon thu muc khac trong phan Luu tai."
-                )
-
-            # MOI: dat ten theo cau hinh naming global
-            import time as _time
-            _base = vname.replace(" ", "_")
-            # Fallback stem neu mode='keep': dung ten voice + timestamp (giong cu)
-            _fallback = f"{_base}_{_time.strftime('%H%M%S')}"
-            _fname = self._next_out_name_single(_fallback)
-            # Hoi ten neu user bat tuy chon
-            try:
-                if self.out_ask_name_var.get():
-                    _v = self._ask_output_filename(_fname, "Tab Văn Bản")
-                    if _v and _v.strip():
-                        _fname = _v.strip()
-                    elif _v is None:
-                        self._log("⏭ User hủy đặt tên - dùng mặc định", "warn")
+                _ext = f".{self.fmt_var.get()}"
             except Exception:
-                pass
-            path = self._out(name=_fname)
-            self._save(final, path)
-
-            if not os.path.exists(path):
+                _ext = ".mp3"
+            _merged_path = os.path.join(_out_folder, f"{_fname}{_ext}")
+            actual_path = self._save(final, _merged_path)
+            if not os.path.exists(actual_path):
                 raise RuntimeError(
-                    f"File da tao nhung khong tim thay:\n{path}\n\n"
+                    f"File da tao nhung khong tim thay:\n{actual_path}\n\n"
                     "Kiem tra quyen ghi thu muc output."
                 )
 
+            # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): xuat .srt timeline
+            # khop audio vua tao, giong tinh nang da co o tab SRT - gap_ms=0
+            # vi khoang lang giua chunk da duoc GOM SAN vao dur cua tung
+            # entry trong _srt_timeline_data (xem noi append o tren).
+            try:
+                if getattr(self, "text_srt_timeline_var", None) and self.text_srt_timeline_var.get():
+                    _srt_out_path = str(Path(actual_path).with_suffix("")) + "_timeline.srt"
+                    _srt_saved_path, _srt_n = _export_srt_timeline(
+                        _srt_timeline_data, 0, _srt_out_path)
+                    self._log(f"📝 SRT timeline ({_srt_n} dòng): {_srt_saved_path}", "ok")
+            except Exception as _srt_exp_err:
+                self._log(f"⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+
             total_t = int(time.time() - self._timer_start)
-            self._st(f"✅ Xong! {total_t}s → {Path(path).name}", P["green"])
-            self._log(f"✅ {path}", "ok")
+            self._st(f"✅ Xong! {total_t}s → {Path(actual_path).name}", P["green"])
+            self._log(f"✅ {actual_path}", "ok")
             self.after(0, lambda: self.pb.configure(value=100))
-            self.after(100, lambda p=path, t=total_t: self._done_notify(p, t))
+            self.after(100, lambda p=actual_path, t=total_t: self._done_notify(p, t))
 
         except Exception as e:
             import traceback
@@ -5516,47 +9205,114 @@ class App(tk.Tk):
             SR = 24000
             parts = []
             silence = torch.zeros(1, int(0.7 * SR))
+            # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): [(text, dur_giay)]
+            # cho tung doan THANH CONG - dung xuat .srt timeline sau.
+            _srt_timeline_data = []
 
             async def gen_edge(text, out_path, voice_id):
                 """Gen Edge TTS voi retry 3 lan + verify file size.
+                Ho tro edge_tts cu (PCM codec) va moi (>= 6.x, chi co MP3).
                 Return: True (OK) / False (loi khac) / 'fallback' (mat mang)."""
-                import edge_tts, asyncio as _aio
+                import edge_tts, asyncio as _aio, wave as _wave, inspect as _ins
+                # Detect API version once: edge_tts < 6.x co 'codec', >= 6.x thi khong
+                _use_pcm = 'codec' in _ins.signature(edge_tts.Communicate.__init__).parameters
                 last_err = None
                 for _attempt in range(3):
+                    pcm_path = out_path + ".pcm"
+                    mp3_path = out_path + ".mp3"
                     try:
-                        # Xoa file cu neu co (tranh nham voi file cu)
-                        try:
-                            if os.path.exists(out_path):
-                                os.remove(out_path)
-                        except Exception:
-                            pass
-                        comm = edge_tts.Communicate(text, voice_id)
-                        await comm.save(out_path)
-                        # Verify: file phai ton tai va > 1KB (MP3 nho nhat ~500 bytes)
-                        if not os.path.exists(out_path):
-                            last_err = "file khong duoc tao"
-                        else:
-                            sz = os.path.getsize(out_path)
-                            if sz < 500:
-                                last_err = f"file rong/loi ({sz} bytes)"
-                                try: os.remove(out_path)
-                                except Exception: pass
+                        for _p in [out_path, pcm_path, mp3_path]:
+                            try:
+                                if os.path.exists(_p): os.remove(_p)
+                            except Exception: pass
+                        if _use_pcm:
+                            # edge_tts cu: PCM, khong encoder delay
+                            comm = edge_tts.Communicate(text, voice_id,
+                                                        codec="audio-24khz-16bit-mono-pcm")
+                            await comm.save(pcm_path)
+                            if not os.path.exists(pcm_path):
+                                last_err = "file khong duoc tao"
                             else:
-                                return True   # OK
+                                sz = os.path.getsize(pcm_path)
+                                if sz < 100:
+                                    last_err = f"file rong/loi ({sz} bytes)"
+                                    try: os.remove(pcm_path)
+                                    except Exception: pass
+                                else:
+                                    with open(pcm_path, "rb") as _f:
+                                        _pcm = _f.read()
+                                    with _wave.open(out_path, "wb") as _wf:
+                                        _wf.setnchannels(1); _wf.setsampwidth(2)
+                                        _wf.setframerate(24000); _wf.writeframes(_pcm)
+                                    try: os.remove(pcm_path)
+                                    except Exception: pass
+                                    return True
+                        else:
+                            # edge_tts >= 6.x: khong co 'codec', luu MP3 roi convert WAV
+                            comm = edge_tts.Communicate(text, voice_id)
+                            await comm.save(mp3_path)
+                            if not os.path.exists(mp3_path):
+                                last_err = "file khong duoc tao"
+                            else:
+                                sz = os.path.getsize(mp3_path)
+                                if sz < 100:
+                                    last_err = f"file rong/loi ({sz} bytes)"
+                                    try: os.remove(mp3_path)
+                                    except Exception: pass
+                                else:
+                                    # FIX 11: soundfile backend khong doc MP3 → dung imageio_ffmpeg convert truoc
+                                    import imageio_ffmpeg as _iff11
+                                    import subprocess as _sp11
+                                    _wav_tmp11 = mp3_path + "_24k.wav"
+                                    try:
+                                        _sp11.run(
+                                            [_iff11.get_ffmpeg_exe(), '-i', mp3_path,
+                                             '-ar', '24000', '-ac', '1', '-f', 'wav',
+                                             _wav_tmp11, '-y', '-loglevel', 'quiet'],
+                                            timeout=30, check=True,
+                                            creationflags=0x08000000)
+                                        _wv, _sr = _safe_audio_load(_wav_tmp11)
+                                    finally:
+                                        try: os.remove(_wav_tmp11)
+                                        except Exception: pass
+                                    if _sr != 24000:
+                                        _wv = torchaudio.functional.resample(_wv, _sr, 24000)
+                                    if _wv.shape[0] > 1:
+                                        _wv = _wv.mean(dim=0, keepdim=True)
+                                    import soundfile as _sf_sv0
+                                    _sf_sv0.write(out_path, _wv.squeeze().numpy(), 24000, subtype='PCM_16')
+                                    try: os.remove(mp3_path)
+                                    except Exception: pass
+                                    return True
                     except Exception as e:
                         last_err = str(e)
                         err_msg = str(e).lower()
-                        # Neu la loi mang -> fallback luon, khong retry
                         if any(x in err_msg for x in ["network","connect","timeout","ssl","winerror","dns","resolve"]):
                             self._log(f"  ⚠ Edge TTS mat mang — chuyen sang MagicVoice Clone", "warn")
                             return "fallback"
-                    # Sleep truoc khi retry
+                    finally:
+                        for _p in [pcm_path, mp3_path]:
+                            try:
+                                if os.path.exists(_p): os.remove(_p)
+                            except Exception: pass
                     if _attempt < 2:
                         self._log(f"  ⚠ Edge TTS thu {_attempt+1}/3 fail ({str(last_err)[:60]}) — retry...", "warn")
-                        await _aio.sleep(1.5 * (_attempt + 1))  # 1.5s, 3s
-                # Het retry -> fail
-                self._log(f"  ⚠ Edge TTS loi sau 3 lan retry: {last_err}", "warn")
-                return False
+                        await _aio.sleep(1.5 * (_attempt + 1))
+                # FIX v3.68 (theo anh Bac yeu cau 2026-07-30, khach bi antivirus/
+                # firewall chan ket noi Microsoft): truoc day CHI fallback ngay
+                # sang MagicVoice khi thong diep loi khop dung 1 trong vai tu
+                # khoa co dinh (network/connect/timeout/ssl/winerror/dns/
+                # resolve) - neu phan mem diet virus/firewall chan theo kieu
+                # tra ve thong diep loi KHONG khop dung tu nao trong danh sach
+                # (rat nhieu bien the tuy tung hang AV), Edge TTS thu du 3 lan
+                # roi BO CUOC HOAN TOAN, hien popup loi bat khach tu di sua
+                # mang/tuong lua - dung khi thuc te khong lien quan toc do/on
+                # dinh mang (anh Bac da xac nhan mang binh thuong). Gio: DA
+                # THU DU 3 LAN THAT SU MA VAN LOI (bat ke thong diep loi la
+                # gi) -> luon fallback sang MagicVoice, khong con truong hop
+                # bo cuoc hoan toan nua.
+                self._log(f"  ⚠ Edge TTS loi sau 3 lan retry ({last_err}) — chuyen sang MagicVoice Clone", "warn")
+                return "fallback"
 
             tmp_dir = tempfile.mkdtemp(prefix="ov_edge_")
 
@@ -5575,39 +9331,45 @@ class App(tk.Tk):
                     n_added = para_for_tts.count(",") - para.count(",")
                     self._log(f"  ↪ Tự thêm {n_added} dấu phẩy để ngắt nghỉ tự nhiên", "info")
 
-                tmp_mp3 = f"{tmp_dir}/p{pi:04d}.mp3"
+                tmp_wav = f"{tmp_dir}/p{pi:04d}.wav"
                 t0 = time.time()
 
                 # Chạy async trong sync context
-                ok = asyncio.run(gen_edge(para_for_tts, tmp_mp3, voice))
+                ok = asyncio.run(gen_edge(para_for_tts, tmp_wav, voice))
                 elapsed = time.time() - t0
 
                 # Fallback: mat mang -> dung MagicVoice clone voice
                 if ok == "fallback":
                     self._log(f"  🔄 [{pi+1}] Dung MagicVoice thay Edge TTS", "info")
                     try:
-                        kw = self._get_voice_kwargs()
+                        kw = self._vkw()
                         tensor = Backend.gen(para, **kw,
-                                             num_step=self._cfg.get("steps",16),
+                                             num_step=self._cfg.get("steps",24),
                                              speed=self._get_speed())
                         parts.append(tensor)
-                        if pi < total - 1:
-                            parts.append(silence)
+                        parts.append(silence)
+                        _srt_timeline_data.append((para, tensor.shape[-1]/SR + 0.7))
                     except Exception as fb_e:
                         self._log(f"  ✗ Fallback that bai: {fb_e}", "err")
                     continue
 
-                if ok and Path(tmp_mp3).exists():
+                if ok and Path(tmp_wav).exists():
                     try:
-                        tensor, sr = _safe_audio_load(tmp_mp3)
-                        if sr != SR:
-                            tensor = torchaudio.functional.resample(tensor, sr, SR)
-                        if tensor.shape[0] > 1:
-                            tensor = tensor.mean(dim=0, keepdim=True)
-                        parts.append(tensor)
-                        if pi < total - 1:
-                            parts.append(silence)
-                        self._log(f"  [{pi+1}/{total}] {elapsed:.1f}s ✓", "info")
+                        tensor, sr = _safe_audio_load(tmp_wav)
+                        if tensor.numel() == 0 or tensor.shape[-1] == 0:
+                            self._log(f"  ⚠ [{pi+1}] Audio rong — bo qua doan nay", "warn")
+                        else:
+                            if sr != SR:
+                                tensor = torchaudio.functional.resample(tensor, sr, SR)
+                            if tensor.shape[0] > 1:
+                                tensor = tensor.mean(dim=0, keepdim=True)
+                            parts.append(tensor)
+                            _dur = tensor.shape[-1]/SR
+                            if pi < total - 1:
+                                parts.append(silence)
+                                _dur += 0.7
+                            _srt_timeline_data.append((para, _dur))
+                            self._log(f"  [{pi+1}/{total}] {elapsed:.1f}s ✓", "info")
                     except Exception as _le:
                         # File tao duoc nhung load fail (file bi corrupt)
                         # -> Thu fallback MagicVoice cho doan nay
@@ -5620,16 +9382,32 @@ class App(tk.Tk):
                             tensor = _to_tensor(a)
                             if tensor is not None and tensor.abs().max() > 0.0001:
                                 parts.append(tensor)
+                                _dur = tensor.shape[-1]/SR
                                 if pi < total - 1:
                                     parts.append(silence)
+                                    _dur += 0.7
+                                _srt_timeline_data.append((para, _dur))
                                 self._log(f"  ✓ [{pi+1}] MagicVoice fallback OK", "info")
                         except Exception as _fbe:
                             self._log(f"  ✗ [{pi+1}] Fallback that bai: {_fbe}", "err")
                 else:
                     self._log(f"  [{pi+1}/{total}] Lỗi — bỏ qua", "warn")
 
+            if not parts and not self.cancel_ev.is_set():
+                self._log("❌ Edge TTS: Khong tao duoc audio. Kiem tra ket noi internet va module edge_tts.", "err")
+                self._st("❌ Edge TTS thất bại — xem Log", P["red"])
+                self.after(0, lambda: messagebox.showerror(
+                    "Edge TTS Lỗi",
+                    "Không tạo được audio.\n\n"
+                    "Nguyên nhân có thể:\n"
+                    "• Mất kết nối internet\n"
+                    "• Server Microsoft bị chặn bởi tường lửa\n"
+                    "• Module edge_tts chưa cài đúng\n\n"
+                    "Xem chi tiết trong Log bên phải.\n"
+                    "Thử lại hoặc dùng chế độ MagicVoice."))
+
             if parts and not self.cancel_ev.is_set():
-                final = torch.cat(parts, dim=1)
+                final = _concat_crossfade(parts, sr=SR if 'SR' in dir() else 24000, fade_ms=15)
                 if hasattr(self, "post_proc_var") and self.post_proc_var.get():
                     final = _post_process(final, SR)
                 # MOI: dat ten theo cau hinh naming global
@@ -5646,17 +9424,34 @@ class App(tk.Tk):
                 path = self._out(name=out_name)
                 if path.endswith(".mp3"):
                     to_mp3(final, path)
+                    # FIX: to_mp3 silent-fallback WAV neu ffmpeg thieu → check va dung dung path
+                    if not os.path.exists(path):
+                        _wav_fb = path.replace(".mp3", ".wav")
+                        if os.path.exists(_wav_fb):
+                            path = _wav_fb
+                            self._log("  ⚠ Luu WAV thay MP3 (ffmpeg chua cai day du) — chay lai CaiDat de sua", "warn")
+                        else:
+                            raise RuntimeError("Khong luu duoc file output — chay lai CaiDat_MagicVoice.bat de cai ffmpeg")
                 else:
                     to_wav(final, path)
+
+                # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): xuat .srt
+                # timeline khop audio vua tao.
+                try:
+                    if getattr(self, "text_srt_timeline_var", None) and self.text_srt_timeline_var.get():
+                        _srt_out_path = str(Path(path).with_suffix("")) + "_timeline.srt"
+                        _srt_saved_path, _srt_n = _export_srt_timeline(
+                            _srt_timeline_data, 0, _srt_out_path)
+                        self._log(f"📝 SRT timeline ({_srt_n} dòng): {_srt_saved_path}", "ok")
+                except Exception as _srt_exp_err:
+                    self._log(f"⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+
                 total_t = int(time.time() - self._timer_start)
                 self._st(f"✅ Edge TTS xong! {total_t}s → {Path(path).name}", P["green"])
                 self._log(f"✅ {path}", "ok")
                 self.after(0, lambda: self.pb.configure(value=100))
                 self.after(100, lambda p=path, t=total_t: self._done_notify(p, t))
-
-            # Dọn temp files
-            import shutil
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+                self.after(150, lambda v=voice: self._ensure_edge_preset_visible(v))
 
         except Exception as e:
             import traceback
@@ -5668,43 +9463,190 @@ class App(tk.Tk):
             self.after(0, lambda: self.pb.stop())
             self.after(0, lambda: self.pb.configure(mode="determinate", value=100))
             self._busy(False)
+            # FIX (bao cao bug 2026-08-14): rmtree truoc day nam CUOI khoi try -
+            # neu co loi xay ra o bat ky buoc nao truoc do (mang, ffmpeg, huy
+            # giua chung...), thu muc tam ov_edge_* bi bo lai vinh vien tren
+            # may khach, tich luy dung luong theo thoi gian. Chuyen vao finally
+            # de LUON don dep du thanh cong hay loi.
+            try:
+                if 'tmp_dir' in dir():
+                    import shutil as _sc2
+                    _sc2.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    def _run_fast_text(self, txt):
+        """FIX v3.68 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): doc
+        van ban bang mode "MG Nhanh" — chay LOCAL (khong can mang),
+        dung _fast_generate() rieng, KHONG dung Backend.gen()/OmniVoice.
+        Cau truc phong theo _run_edge_text() (tach doan, noi bang silence,
+        luu output) nhung don gian hon vi khong can retry-network/PCM-MP3."""
+        if not self._verify_license_or_abort():
+            return
+        self._busy(True)
+        self._start_timer()
+        try:
+            import torch, tempfile, shutil as _sh0
+
+            voice = self.fast_voice_var.get() if hasattr(self, "fast_voice_var") else FAST_VOICES_LIST[0][0]
+            self._log(f"⚡ MG Nhanh | Voice: {voice} | {len(txt)} ký tự", "info")
+
+            paras = [p.strip() for p in txt.split("\n\n") if p.strip()]
+            if not paras:
+                paras = [txt.strip()]
+            total = len(paras)
+            self.after(0, lambda: self.pb.configure(mode="determinate", value=0))
+
+            SR = 24000
+            parts = []
+            silence = torch.zeros(1, int(0.7 * SR))
+            speed = self._get_speed()
+            # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): [(text, dur_giay)]
+            # cho tung doan THANH CONG - dung xuat .srt timeline sau.
+            _srt_timeline_data = []
+
+            for pi, para in enumerate(paras):
+                if self.cancel_ev.is_set():
+                    self._log("⏹ Đã hủy", "warn"); return
+                pct = pi / total * 100
+                self.after(0, lambda v=pct: self.pb.configure(value=v))
+                self._st(f"[{pi+1}/{total}] {para[:45]}…")
+                t0 = time.time()
+                try:
+                    tensor = _fast_generate(para, voice, speed=speed)
+                    if tensor is None or tensor.abs().max().item() < 0.0001:
+                        self._log(f"  ⚠ [{pi+1}] Audio rỗng — bỏ qua đoạn này", "warn")
+                        continue
+                    parts.append(tensor)
+                    _dur = tensor.shape[-1] / SR
+                    if pi < total - 1:
+                        parts.append(silence)
+                        _dur += 0.7
+                    _srt_timeline_data.append((para, _dur))
+                    self._log(f"  [{pi+1}/{total}] {time.time()-t0:.1f}s ✓", "info")
+                except Exception as _fe:
+                    self._log(f"  ✗ [{pi+1}] Lỗi: {_fe}", "err")
+
+            if not parts and not self.cancel_ev.is_set():
+                self._log("❌ MG Nhanh: Không tạo được audio.", "err")
+                self._st("❌ MG Nhanh thất bại — xem Log", P["red"])
+                self.after(0, lambda: messagebox.showerror(
+                    "MG Nhanh — Lỗi",
+                    "Không tạo được audio.\n\n"
+                    "Kiểm tra: đã cài đủ môi trường chưa (chạy lại "
+                    "'Cài đặt lại môi trường (Python/AI)' nếu cần).\n\n"
+                    "Xem chi tiết trong Log bên phải."))
+
+            if parts and not self.cancel_ev.is_set():
+                final = torch.cat(parts, dim=-1)
+                if hasattr(self, "post_proc_var") and self.post_proc_var.get():
+                    final = _post_process(final, SR)
+                _vname = voice
+                _fallback = f"{_vname}_Nhanh"
+                out_name = self._next_out_name_single(_fallback)
+                try:
+                    if self.out_ask_name_var.get():
+                        _v = self._ask_output_filename(out_name, "Tab Văn Bản (MG Nhanh)")
+                        if _v and _v.strip(): out_name = _v.strip()
+                except Exception:
+                    pass
+                path = self._out(name=out_name)
+                if path.endswith(".mp3"):
+                    to_mp3(final, path)
+                    if not os.path.exists(path):
+                        _wav_fb = path.replace(".mp3", ".wav")
+                        if os.path.exists(_wav_fb):
+                            path = _wav_fb
+                            self._log("  ⚠ Lưu WAV thay MP3 (ffmpeg chưa cài đầy đủ)", "warn")
+                        else:
+                            raise RuntimeError("Không lưu được file output — chạy lại CaiDat_MagicVoice.bat để cài ffmpeg")
+                else:
+                    to_wav(final, path)
+
+                # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): xuat .srt
+                # timeline khop audio vua tao.
+                try:
+                    if getattr(self, "text_srt_timeline_var", None) and self.text_srt_timeline_var.get():
+                        _srt_out_path = str(Path(path).with_suffix("")) + "_timeline.srt"
+                        _srt_saved_path, _srt_n = _export_srt_timeline(
+                            _srt_timeline_data, 0, _srt_out_path)
+                        self._log(f"📝 SRT timeline ({_srt_n} dòng): {_srt_saved_path}", "ok")
+                except Exception as _srt_exp_err:
+                    self._log(f"⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+
+                total_t = int(time.time() - self._timer_start)
+                self._st(f"✅ MG Nhanh xong! {total_t}s → {Path(path).name}", P["green"])
+                self._log(f"✅ {path}", "ok")
+                self.after(0, lambda: self.pb.configure(value=100))
+                self.after(100, lambda p=path, t=total_t: self._done_notify(p, t))
+                self.after(150, lambda v=voice: self._ensure_fast_preset_visible(v))
+
+        except Exception as e:
+            import traceback
+            self._log(f"❌ MG Nhanh: {e}", "err")
+            self._log(traceback.format_exc()[-300:], "err")
+            self._st(f"❌ {str(e)[:80]}", P["red"])
+        finally:
+            self._stop_timer()
+            self.after(0, lambda: self.pb.stop())
+            self.after(0, lambda: self.pb.configure(mode="determinate", value=100))
+            self._busy(False)
 
     def _refresh_srt_voices(self):
-        """Cap nhat danh sach voice trong combobox SRT tab."""
-        # Guard: widget chua duoc tao (goi qua som)
-        if not hasattr(self, "srt_voice_cb") or not hasattr(self, "srt_voice_info"):
+        """Cap nhat nhan hien thi (read-only) engine/giong dang dung trong
+        tab SRT. FIX v3.68 (theo anh Bac bao loi 2026-07-26): KHONG con
+        combobox rieng de chon - tab SRT chi HIEN THI dung engine/giong
+        dang active o sidebar (self.tts_mode), tranh lech trang thai.
+        Ham nay duoc goi lai o nhieu noi (doi mode sidebar, luu/xoa/chon
+        preset, mo tab SRT...) de nhan luon cap nhat kip thoi."""
+        if not hasattr(self, "srt_voice_info"):
             return
-        names = [vp.name for vp in self.lib.profiles]
-        self.srt_voice_cb["values"] = names
-        # Dong bo voi voice dang chon tren sidebar
-        if 0 <= self.sel_idx < len(self.lib.profiles):
-            cur = self.lib.profiles[self.sel_idx].name
-            if cur in names:
-                self.srt_voice_cb.set(cur)
-                mode = self.lib.profiles[self.sel_idx].mode
-                mode_icon = {"clone":"🎯","design":"✨","auto":"🎲","edge":"🌐"}.get(mode,"●")
-                self.srt_voice_info.config(
-                    text=f"{mode_icon} {mode.upper()}",
-                    fg=P["purple"])
-            elif names:
-                self.srt_voice_cb.current(0)
-        elif names:
-            self.srt_voice_cb.current(0)
+        _mode = self.tts_mode.get() if hasattr(self, "tts_mode") else "omnivoice"
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26, lan 7): _mode_btns_srt
+        # gio la tk.Button kieu pill (khong con Radiobutton do render loi) -
+        # can tu cap nhat mau moi lan doi mode, giong het _mode_btns_sb ben
+        # sidebar.
+        if hasattr(self, "_mode_btns_srt"):
+            for v, b in self._mode_btns_srt.items():
+                b.config(bg=P["purple"] if v==_mode else P["hover"],
+                         fg="white" if v==_mode else P["sub"],
+                         font=(FN,8,"bold") if v==_mode else (FN,8,"normal"))
 
-        def _on_change(e=None):
-            if not hasattr(self, "srt_voice_info"): return
-            name = self.srt_voice_var.get()
-            for i, vp in enumerate(self.lib.profiles):
-                if vp.name == name:
-                    self.sel_idx = i
-                    self._update_sidebar()
-                    mode = vp.mode
-                    mode_icon = {"clone":"🎯","design":"✨","auto":"🎲","edge":"🌐"}.get(mode,"●")
-                    self.srt_voice_info.config(
-                        text=f"{mode_icon} {mode.upper()}",
-                        fg=P["purple"])
-                    break
-        self.srt_voice_cb.bind("<<ComboboxSelected>>", _on_change)
+        # Cap nhat combobox chon giong - FIX v3.68 (theo anh Bac bao loi
+        # 2026-07-26, lan 5): mode MagicVoice gio CUNG liet ke danh sach
+        # preset Clone/Design da luu (truoc day chi Edge/Fast moi co danh
+        # sach, MagicVoice de trong khien anh Bac phai chay qua sidebar).
+        if hasattr(self, "srt_pick_cb"):
+            if _mode == "edge":
+                self.srt_pick_cb["values"] = [v[1] for v in EDGE_VOICES_LIST]
+            elif _mode == "fast":
+                self.srt_pick_cb["values"] = [v[1] for v in FAST_VOICES_LIST]
+            else:
+                _magic_presets = [vp for vp in self.lib.profiles if vp.mode in ("clone","design")]
+                self.srt_pick_cb["values"] = [vp.name for vp in _magic_presets]
+            self.srt_pick_cb.pack(side="left")
+
+        if _mode == "edge" and hasattr(self, "edge_voice_var"):
+            _code = self.edge_voice_var.get()
+            _codes = [v[0] for v in EDGE_VOICES_LIST]
+            _label = EDGE_VOICES_LIST[_codes.index(_code)][1] if _code in _codes else _code
+            self.srt_voice_info.config(text=f"🌐 Edge — {_label}", fg="#2563eb")
+            if hasattr(self, "srt_pick_cb"): self.srt_pick_var.set(_label)
+        elif _mode == "fast" and hasattr(self, "fast_voice_var"):
+            _code = self.fast_voice_var.get()
+            _codes = [v[0] for v in FAST_VOICES_LIST]
+            _label = FAST_VOICES_LIST[_codes.index(_code)][1] if _code in _codes else _code
+            self.srt_voice_info.config(text=f"⚡ MG Nhanh — {_label}", fg="#0369a1")
+            if hasattr(self, "srt_pick_cb"): self.srt_pick_var.set(_label)
+        else:
+            vp = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+            if vp:
+                mode_icon = {"clone":"🎯","design":"✨"}.get(vp.mode,"●")
+                self.srt_voice_info.config(text=f"{mode_icon} MagicVoice — {vp.name}", fg=P["purple"])
+                if hasattr(self, "srt_pick_cb") and vp.mode in ("clone","design"):
+                    self.srt_pick_var.set(vp.name)
+            else:
+                self.srt_voice_info.config(text="🤖 MagicVoice — (chưa chọn voice)", fg=P["dim"])
 
     def _do_srt(self):
         """Đọc SRT — tự nhận biết định dạng từ editor nếu chưa parse."""
@@ -5731,15 +9673,27 @@ class App(tk.Tk):
         self.is_running = True
         self._running_tab = "srt"
         self.after(0, self._refresh_tab_indicators)
-        # Neu chon Edge TTS mode → chay _run_srt_edge truc tiep
-        if hasattr(self, "srt_tts_mode") and self.srt_tts_mode.get() == "edge":
-            voice_id = self.srt_edge_voice_var.get() if hasattr(self, "srt_edge_voice_var") else "en-US-AriaNeural"
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26): tab SRT khong con bo
+        # chon rieng (srt_tts_mode) - dispatch THANG theo sidebar
+        # (self.tts_mode), CHI 1 nguon duy nhat, khong the lech trang thai.
+        _srt_mode = self.tts_mode.get() if hasattr(self, "tts_mode") else "omnivoice"
+        if _srt_mode == "edge":
+            voice_id = self.edge_voice_var.get() if hasattr(self, "edge_voice_var") else "en-US-AriaNeural"
             class _FakeVP:
                 mode = "edge"
                 instruct = f"edge:{voice_id}"
                 name = voice_id
             threading.Thread(target=self._run_srt_edge,
                              args=(self.srt_entries, _FakeVP()),
+                             daemon=True).start()
+        elif _srt_mode == "fast":
+            voice_id = self.fast_voice_var.get() if hasattr(self, "fast_voice_var") else FAST_VOICES_LIST[0][0]
+            class _FakeVPFast:
+                mode = "fast"
+                instruct = f"fast:{voice_id}"
+                name = voice_id
+            threading.Thread(target=self._run_srt_fast,
+                             args=(self.srt_entries, _FakeVPFast()),
                              daemon=True).start()
         else:
             threading.Thread(target=self._run_srt, daemon=True).start()
@@ -5794,8 +9748,6 @@ class App(tk.Tk):
                 e.index, e.start, e.end,
                 e.text.replace("\n"," ")[:120]))
         self.srt_cnt_lbl.config(text=f"{len(entries)} câu")
-        # Tắt timeline mode để dùng sequential (không cần timestamp chính xác)
-        self.srt_timeline_var.set(False)
         self._log(f"✅ Tạo {len(entries)} câu từ văn bản thường","ok")
 
     def _run_srt_edge(self, entries, vp):
@@ -5803,6 +9755,24 @@ class App(tk.Tk):
         # MOI: kiem tra license truoc
         if not self._verify_license_or_abort():
             return
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): bo dem gio - ham nay
+        # co the duoc goi truc tiep (khong qua _run_srt()) khi khach chon
+        # san mode Edge o sidebar, nen can tu quan ly start/stop rieng.
+        self._start_timer()
+        # FIX (bao cao bug 2026-08-14): TRUOC DAY _stop_timer()/_busy(False)
+        # chi chay khi ham xong BINH THUONG - neu torch.cat() hoac buoc nao o
+        # duoi loi (vd fallback MagicVoice tra ve so kenh audio khac voi cac
+        # doan da tich luy), exception se bay len KHONG bi bat, khien nut
+        # "Tao" ket disable vinh vien (is_running khong bao gio ve False),
+        # khach tuong app treo phai khoi dong lai. Boc try/finally dam bao
+        # LUON don dep du co loi hay khong.
+        try:
+            self._run_srt_edge_body(entries, vp)
+        finally:
+            self._stop_timer()
+            self._busy(False)
+
+    def _run_srt_edge_body(self, entries, vp):
         import asyncio, tempfile, torch, torchaudio as _ta
 
         # Lay edge voice id
@@ -5813,44 +9783,101 @@ class App(tk.Tk):
             voice_id = self.edge_voice_var.get()
 
         self._log(f"🌐 SRT Edge TTS | Voice: {voice_id}", "info")
+        # Luu phien ngay khi bat dau (de co the goi lai du da dung giua chung)
+        try:
+            _vname_e = vp.name if vp else ""
+            self._save_session(self.srt_editor.get("1.0","end").strip(), _vname_e, self.out_dir_var.get())
+        except Exception: pass
 
         SR = 24000
         silence = torch.zeros(1, int(self.gap_var.get() * SR / 1000))
+        _gap_zero = (self.gap_var.get() == 0)
         tensors = []
         all_parts = []
         ok = fail = 0
         total = sum(1 for e in entries if e.text.strip())
 
         async def _gen_one(text, voice):
-            """Gen Edge TTS cho 1 SRT entry voi retry 3 lan + verify file."""
-            import edge_tts, asyncio as _aio, os as _os
+            """Gen Edge TTS cho 1 SRT entry voi retry 3 lan + verify file.
+            Ho tro edge_tts cu (PCM codec) va moi (>= 6.x, chi co MP3)."""
+            import edge_tts, asyncio as _aio, os as _os, wave as _wave, inspect as _ins
+            import torchaudio as _ta_one
+            _use_pcm = 'codec' in _ins.signature(edge_tts.Communicate.__init__).parameters
             last_err = None
             for _attempt in range(3):
-                tmp_mp3 = tempfile.mktemp(suffix=".mp3")
+                tmp_wav = tempfile.mktemp(suffix=".wav")
+                tmp_pcm = tmp_wav + ".pcm"
+                tmp_mp3 = tmp_wav + ".mp3"
                 try:
-                    comm = edge_tts.Communicate(text, voice)
-                    await comm.save(tmp_mp3)
-                    # Verify file size > 500 bytes
-                    if _os.path.exists(tmp_mp3):
-                        sz = _os.path.getsize(tmp_mp3)
-                        if sz >= 500:
-                            return tmp_mp3   # OK
+                    if _use_pcm:
+                        comm = edge_tts.Communicate(text, voice,
+                                                    codec="audio-24khz-16bit-mono-pcm")
+                        await comm.save(tmp_pcm)
+                        if _os.path.exists(tmp_pcm):
+                            sz = _os.path.getsize(tmp_pcm)
+                            if sz >= 100:
+                                with open(tmp_pcm, "rb") as _f:
+                                    _pcm = _f.read()
+                                with _wave.open(tmp_wav, "wb") as _wf:
+                                    _wf.setnchannels(1); _wf.setsampwidth(2)
+                                    _wf.setframerate(24000); _wf.writeframes(_pcm)
+                                try: _os.remove(tmp_pcm)
+                                except Exception: pass
+                                return tmp_wav
+                            else:
+                                last_err = f"file rong ({sz} bytes)"
                         else:
-                            last_err = f"file rong ({sz} bytes)"
-                            try: _os.remove(tmp_mp3)
-                            except Exception: pass
+                            last_err = "file khong duoc tao"
                     else:
-                        last_err = "file khong duoc tao"
+                        # edge_tts >= 6.x: luu MP3 roi convert WAV
+                        comm = edge_tts.Communicate(text, voice)
+                        await comm.save(tmp_mp3)
+                        if _os.path.exists(tmp_mp3):
+                            sz = _os.path.getsize(tmp_mp3)
+                            if sz >= 100:
+                                # FIX 11: soundfile backend khong doc MP3 → dung imageio_ffmpeg convert truoc
+                                import imageio_ffmpeg as _iff11b
+                                import subprocess as _sp11b
+                                _wav_tmp11b = tmp_mp3 + "_24k.wav"
+                                try:
+                                    _sp11b.run(
+                                        [_iff11b.get_ffmpeg_exe(), '-i', tmp_mp3,
+                                         '-ar', '24000', '-ac', '1', '-f', 'wav',
+                                         _wav_tmp11b, '-y', '-loglevel', 'quiet'],
+                                        timeout=30, check=True,
+                                        creationflags=0x08000000)
+                                    _wv, _sr = _safe_audio_load(_wav_tmp11b)
+                                finally:
+                                    try: _os.remove(_wav_tmp11b)
+                                    except Exception: pass
+                                if _sr != 24000:
+                                    _wv = _ta_one.functional.resample(_wv, _sr, 24000)
+                                if _wv.shape[0] > 1:
+                                    _wv = _wv.mean(dim=0, keepdim=True)
+                                import soundfile as _sf_sv1
+                                _sf_sv1.write(tmp_wav, _wv.squeeze().numpy(), 24000, subtype='PCM_16')
+                                try: _os.remove(tmp_mp3)
+                                except Exception: pass
+                                return tmp_wav
+                            else:
+                                last_err = f"file rong ({sz} bytes)"
+                        else:
+                            last_err = "file khong duoc tao"
                 except Exception as e:
                     last_err = str(e)
-                # Retry voi delay tang dan
+                finally:
+                    for _p in [tmp_pcm, tmp_mp3]:
+                        try:
+                            if _os.path.exists(_p): _os.remove(_p)
+                        except Exception: pass
                 if _attempt < 2:
                     await _aio.sleep(1.5 * (_attempt + 1))
+            self._log(f"   ⚠ Edge TTS that bai sau 3 lan: {last_err}", "warn")
             return None
 
-        # MOI: dat ten output theo cau hinh naming global
-        _fallback = f"SRT_{voice_id.replace('-','_')}"
-        _name = self._next_out_name_single(_fallback)
+        # Dat ten theo stem file SRT (mode=keep) hoac prefix (mode=prefix)
+        _srt_stem = Path(self.srt_path.get()).stem if self.srt_path.get() else ""
+        _name = self._next_out_name_single(_srt_stem)
         try:
             if self.out_ask_name_var.get():
                 _v = self._ask_output_filename(_name, "Tab SRT (Edge TTS)")
@@ -5858,45 +9885,88 @@ class App(tk.Tk):
         except Exception:
             pass
         out = self._out(name=_name)
+        if _gap_zero:
+            out = str(Path(out).with_suffix(".wav"))
         parts_dir = Path(out).parent / (Path(out).stem + "_parts")
         parts_dir.mkdir(parents=True, exist_ok=True)
 
         entry_num = 0
+        _srt_timeline_data = []  # FIX v3.67: [(text_goc, dur_giay), ...] entry THANH CONG, de xuat .srt timeline sau
         for i, e in enumerate(entries):
             if self.cancel_ev.is_set(): break
             txt = e.text.strip()
             for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
                 txt = txt.replace(ch, "")
             if not txt: continue
+            _orig_txt_for_srt = txt  # FIX v3.67: text GOC (truoc phonetic/TTS-friendly) de xuat .srt timeline
 
             entry_num += 1
             self._st(f"[{entry_num}/{total}] {txt[:50]}")
             self.after(0, lambda v=entry_num/total*100: self.pb.configure(value=v))
 
             try:
-                # MOI: chen dau phay vao cau dai khong co dau de Edge TTS
-                # ngat nghi tu nhien hon
+                txt = _apply_phonetic(txt)
+                # FIX v3.66: Edge TTS khong tach cau dai (rule B) - xem ghi
+                # chu o _do_text().
+                if getattr(self, "srt_tts_friendly_var", None) and self.srt_tts_friendly_var.get():
+                    txt = _tts_friendly(txt, split_long_sentences=False)
                 txt_for_tts = _edge_smart_pause(txt, max_words=8)
 
-                tmp_mp3 = asyncio.run(_gen_one(txt_for_tts, voice_id))
-                if not tmp_mp3 or not Path(tmp_mp3).exists():
-                    raise RuntimeError("Edge TTS khong tao duoc audio")
-                t, sr = _safe_audio_load(tmp_mp3)
-                try: Path(tmp_mp3).unlink()
-                except: pass
-                if sr != SR:
-                    t = _ta.functional.resample(t, sr, SR)
-                if t.shape[0] > 1:
-                    t = t.mean(dim=0, keepdim=True)
-                # Luu part
-                _part_mp3 = str(parts_dir / f"{entry_num:03d}.mp3")
-                to_mp3(t, _part_mp3)
-                all_parts.append(_part_mp3)
-                tensors.append(t)
+                import sys as _sys
+                if _sys.platform == "win32":
+                    _asyncio_pol = asyncio.WindowsSelectorEventLoopPolicy()
+                    asyncio.set_event_loop_policy(_asyncio_pol)
+                _evloop = asyncio.new_event_loop()
+                try:
+                    tmp_wav = _evloop.run_until_complete(_gen_one(txt_for_tts, voice_id))
+                finally:
+                    _evloop.close()
+                if not tmp_wav or not Path(tmp_wav).exists():
+                    # FIX v3.68 (theo anh Bac yeu cau 2026-07-30, khach bi
+                    # antivirus/firewall chan ket noi Microsoft - khong lien
+                    # quan toc do mang): truoc day het 3 lan retry la RAISE
+                    # loi luon, ca entry bi bo qua hoan toan - khac voi tab
+                    # Van Ban (_run_edge_text) da co san fallback sang
+                    # MagicVoice khi Edge TTS loi. Dong bo hoa: tab SRT cung
+                    # tu dong dung MagicVoice thay the cho entry loi, thay vi
+                    # bo qua/bat khach tu di sua mang/tuong lua.
+                    self._log(f"  🔄 [{entry_num}] Edge TTS lỗi — dùng MagicVoice thay thế", "warn")
+                    try:
+                        kw = self._vkw()
+                        t = Backend.gen(txt_for_tts, **kw,
+                                         num_step=self._cfg.get("steps", 24),
+                                         speed=self._get_speed())
+                    except Exception as _fbe:
+                        raise RuntimeError(f"Edge TTS loi va Fallback MagicVoice cung loi: {_fbe}")
+                else:
+                    t, sr = _safe_audio_load(tmp_wav)
+                    try: Path(tmp_wav).unlink()
+                    except: pass
+                    if sr != SR:
+                        t = _ta.functional.resample(t, sr, SR)
+                    if t.shape[0] > 1:
+                        t = t.mean(dim=0, keepdim=True)
+                _t = self._trim_sil(t) if _gap_zero else t
+                all_parts.append(_t)
+                tensors.append(_t)
                 if entry_num < total:
                     tensors.append(silence)
+                # FIX v3.67: do dai audio THAT cua entry nay (NGAY TRUOC khi
+                # chen gap), luu kem text goc de xuat .srt timeline sau khi ghep.
+                _srt_timeline_data.append((_orig_txt_for_srt, _t.shape[-1] / SR))
                 ok += 1
                 self._log(f"  [{entry_num}/{total}] ✓ {txt[:50]}", "info")
+                # Luu ngay vao parts_dir sau moi entry (user thay file lien)
+                try:
+                    if _gap_zero:
+                        _pt_save = _t.unsqueeze(0) if _t.dim() == 1 else _t
+                        to_wav(_pt_save, str(parts_dir / f"{entry_num:03d}.wav"))
+                    else:
+                        _pt_save = torch.cat([_t, silence], dim=-1)
+                        _pt_save = _pt_save.unsqueeze(0) if _pt_save.dim() == 1 else _pt_save
+                        to_mp3(_pt_save, str(parts_dir / f"{entry_num:03d}.mp3"))
+                except Exception as _pe:
+                    self._log(f"  ⚠ Luu le {entry_num}: {_pe}", "warn")
             except Exception as ex:
                 fail += 1
                 self._log(f"  [{entry_num}] ❌ {ex}", "err")
@@ -5904,15 +9974,165 @@ class App(tk.Tk):
         if tensors and not self.cancel_ev.is_set():
             self._log(f"🔗 Ghep {ok} doan...", "info")
             final = torch.cat(tensors, dim=1)
-            self._save(final, out)
-            self._log(f"✅ Full: {out}", "ok")
-            self._log(f"📁 Parts ({len(all_parts)} files): {parts_dir.name}/", "ok")
-            self._st(f"✅ Xong! {ok} cau → {Path(out).name}", P["green"])
+            try:
+                actual_out = self._save(final, out)
+                if not os.path.exists(actual_out):
+                    raise RuntimeError(f"File khong duoc tao: {actual_out}")
+                self._log(f"✅ Full: {actual_out}", "ok")
+                # FIX v3.67 (tinh nang moi, ap dung ca Edge TTS - xem ghi chu
+                # day du o _run_srt()): xuat .srt timeline khop audio vua tao.
+                # FIX v3.67 (checkbox bat/tat): CHI xuat neu khach tich chon -
+                # tat thi bo qua hoan toan, hanh vi giong het truoc khi co tinh nang.
+                try:
+                    if self.srt_timeline_var.get():
+                        _srt_out_path = str(Path(actual_out).with_suffix("")) + "_timeline.srt"
+                        _srt_saved_path, _srt_n = _export_srt_timeline(
+                            _srt_timeline_data, self.gap_var.get(), _srt_out_path)
+                        self._log(f"📝 SRT timeline ({_srt_n} dòng): {_srt_saved_path}", "ok")
+                except Exception as _srt_exp_err:
+                    self._log(f"⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+            except Exception as _sv_err:
+                self._log(f"❌ Loi luu file: {_sv_err}", "err")
+                self.after(0, lambda e=str(_sv_err): messagebox.showerror(
+                    "Lỗi lưu file",
+                    f"Tạo voice xong nhưng không lưu được!\n\n{e}\n\n"
+                    "Kiểm tra: ffmpeg, quyền ghi thư mục, dung lượng ổ đĩa."))
+                self._stop_timer()
+                self._busy(False)
+                return
+            self._log(f"📁 Parts ({ok} files): {parts_dir.name}/", "ok")
+            self._st(f"✅ Xong! {ok} cau → {Path(actual_out).name}", P["green"])
             self.after(0, lambda: self.pb.configure(value=100))
             self._srt_notify_shown = False  # Reset de lan sau van hien popup
+            # Luu phien de goi lai
+            _vname = self.lib.profiles[self.sel_idx].name if 0 <= self.sel_idx < len(self.lib.profiles) else ""
+            self._save_session(self.srt_editor.get("1.0","end").strip(), _vname, self.out_dir_var.get())
         self.after(100, lambda o=out, d=str(parts_dir): self._done_notify_srt(o, d))
 
-        self._busy(False)
+    def _run_srt_fast(self, entries, vp):
+        """FIX v3.68 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): tao
+        SRT bang mode "MG Nhanh" — phong theo _run_srt_edge() nhung
+        dung _fast_generate() (local, khong can mang, khong retry-network)."""
+        if not self._verify_license_or_abort():
+            return
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): bo dem gio - ham nay
+        # co the duoc goi truc tiep (khong qua _run_srt()) khi khach chon
+        # san mode MG Nhanh o sidebar, nen can tu quan ly start/stop rieng.
+        self._start_timer()
+        # FIX (bao cao bug 2026-08-14): xem ghi chu day du o _run_srt_edge() -
+        # cung loai loi, boc try/finally de khong bao gio ket UI vinh vien.
+        try:
+            self._run_srt_fast_body(entries, vp)
+        finally:
+            self._stop_timer()
+            self._busy(False)
+
+    def _run_srt_fast_body(self, entries, vp):
+        import torch
+
+        voice_id = FAST_VOICES_LIST[0][0]
+        if vp.instruct and vp.instruct.startswith("fast:"):
+            voice_id = vp.instruct.replace("fast:", "").strip()
+        elif hasattr(self, "fast_voice_var"):
+            voice_id = self.fast_voice_var.get()
+
+        self._log(f"⚡ SRT MG Nhanh | Voice: {voice_id}", "info")
+        try:
+            _vname_e = vp.name if vp else ""
+            self._save_session(self.srt_editor.get("1.0","end").strip(), _vname_e, self.out_dir_var.get())
+        except Exception: pass
+
+        SR = 24000
+        silence = torch.zeros(1, int(self.gap_var.get() * SR / 1000))
+        _gap_zero = (self.gap_var.get() == 0)
+        tensors = []
+        ok = fail = 0
+        total = sum(1 for e in entries if e.text.strip())
+
+        _srt_stem = Path(self.srt_path.get()).stem if self.srt_path.get() else ""
+        _name = self._next_out_name_single(_srt_stem)
+        try:
+            if self.out_ask_name_var.get():
+                _v = self._ask_output_filename(_name, "Tab SRT (MG Nhanh)")
+                if _v and _v.strip(): _name = _v.strip()
+        except Exception:
+            pass
+        out = self._out(name=_name)
+        if _gap_zero:
+            out = str(Path(out).with_suffix(".wav"))
+        parts_dir = Path(out).parent / (Path(out).stem + "_parts")
+        parts_dir.mkdir(parents=True, exist_ok=True)
+
+        entry_num = 0
+        _srt_timeline_data = []
+        speed = self._get_speed()
+        for i, e in enumerate(entries):
+            if self.cancel_ev.is_set(): break
+            txt = e.text.strip()
+            for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
+                txt = txt.replace(ch, "")
+            if not txt: continue
+            _orig_txt_for_srt = txt
+
+            entry_num += 1
+            self._st(f"[{entry_num}/{total}] {txt[:50]}")
+            self.after(0, lambda v=entry_num/total*100: self.pb.configure(value=v))
+
+            try:
+                t = _fast_generate(txt, voice_id, speed=speed)
+                _t = self._trim_sil(t) if _gap_zero else t
+                tensors.append(_t)
+                if entry_num < total:
+                    tensors.append(silence)
+                _srt_timeline_data.append((_orig_txt_for_srt, _t.shape[-1] / SR))
+                ok += 1
+                self._log(f"  [{entry_num}/{total}] ✓ {txt[:50]}", "info")
+                try:
+                    if _gap_zero:
+                        _pt_save = _t.unsqueeze(0) if _t.dim() == 1 else _t
+                        to_wav(_pt_save, str(parts_dir / f"{entry_num:03d}.wav"))
+                    else:
+                        _pt_save = torch.cat([_t, silence], dim=-1)
+                        _pt_save = _pt_save.unsqueeze(0) if _pt_save.dim() == 1 else _pt_save
+                        to_mp3(_pt_save, str(parts_dir / f"{entry_num:03d}.mp3"))
+                except Exception as _pe:
+                    self._log(f"  ⚠ Luu le {entry_num}: {_pe}", "warn")
+            except Exception as ex:
+                fail += 1
+                self._log(f"  [{entry_num}] ❌ {ex}", "err")
+
+        if tensors and not self.cancel_ev.is_set():
+            self._log(f"🔗 Ghep {ok} doan...", "info")
+            final = torch.cat(tensors, dim=1)
+            try:
+                actual_out = self._save(final, out)
+                if not os.path.exists(actual_out):
+                    raise RuntimeError(f"File khong duoc tao: {actual_out}")
+                self._log(f"✅ Full: {actual_out}", "ok")
+                try:
+                    if self.srt_timeline_var.get():
+                        _srt_out_path = str(Path(actual_out).with_suffix("")) + "_timeline.srt"
+                        _srt_saved_path, _srt_n = _export_srt_timeline(
+                            _srt_timeline_data, self.gap_var.get(), _srt_out_path)
+                        self._log(f"📝 SRT timeline ({_srt_n} dòng): {_srt_saved_path}", "ok")
+                except Exception as _srt_exp_err:
+                    self._log(f"⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+            except Exception as _sv_err:
+                self._log(f"❌ Loi luu file: {_sv_err}", "err")
+                self.after(0, lambda e=str(_sv_err): messagebox.showerror(
+                    "Lỗi lưu file",
+                    f"Tạo voice xong nhưng không lưu được!\n\n{e}\n\n"
+                    "Kiểm tra: ffmpeg, quyền ghi thư mục, dung lượng ổ đĩa."))
+                self._stop_timer()
+                self._busy(False)
+                return
+            self._log(f"📁 Parts ({ok} files): {parts_dir.name}/", "ok")
+            self._st(f"✅ Xong! {ok} cau → {Path(actual_out).name}", P["green"])
+            self.after(0, lambda: self.pb.configure(value=100))
+            self._srt_notify_shown = False
+            _vname = self.lib.profiles[self.sel_idx].name if 0 <= self.sel_idx < len(self.lib.profiles) else ""
+            self._save_session(self.srt_editor.get("1.0","end").strip(), _vname, self.out_dir_var.get())
+        self.after(100, lambda o=out, d=str(parts_dir): self._done_notify_srt(o, d))
 
     def _run_srt(self):
         """
@@ -5926,11 +10146,25 @@ class App(tk.Tk):
             return
         import torchaudio, tempfile
         self._busy(True); self.cancel_ev.clear()
+        # Luu phien ngay khi bat dau (de co the goi lai du da dung giua chung)
+        try:
+            _vname_s = self.lib.profiles[self.sel_idx].name if 0 <= self.sel_idx < len(self.lib.profiles) else ""
+            self._save_session(self.srt_editor.get("1.0","end").strip(), _vname_s, self.out_dir_var.get())
+        except Exception: pass
         entries   = self.srt_entries
         total     = len(entries)
+        _total_nonempty_s = sum(1 for e in entries if e.text.strip() and len(e.text.strip()) >= 2)
         tmp       = Path(tempfile.mkdtemp(prefix="ov_srt_"))
         SR        = 24000
-        use_tl    = self.srt_timeline_var.get()
+        # Kiểm tra voice trước khi chạy
+        if self.sel_idx < 0 or self.sel_idx >= len(self.lib.profiles):
+            self._log("❌ Chưa chọn voice! Hãy chọn voice trong danh sách trước khi tạo.", "err")
+            self.after(0, lambda: messagebox.showerror(
+                "Chưa chọn Voice",
+                "Bạn chưa chọn voice!\n\nHãy chọn một voice trong danh sách bên phải rồi bấm Tạo lại."))
+            self._busy(False)
+            shutil.rmtree(tmp, ignore_errors=True)
+            return
 
         try:
             kw = self._vkw()
@@ -5952,230 +10186,198 @@ class App(tk.Tk):
             self._run_srt_edge(entries, vp_cur)
             shutil.rmtree(tmp, ignore_errors=True)
             return
+        # FIX v3.68: Neu voice mode = fast ("MG Nhanh") → dung
+        # _fast_generate() (khong can GPU/mang).
+        if vp_cur and vp_cur.mode == "fast":
+            self._run_srt_fast(entries, vp_cur)
+            shutil.rmtree(tmp, ignore_errors=True)
+            return
+
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): bo dem gio da co san
+        # (self._timer_label/_start_timer/_stop_timer) nhung truoc day CHI
+        # noi cho tab Van Ban - tab SRT (nhanh MagicVoice mac dinh) chua co,
+        # khach khong biet da tao duoc bao lau, de sot ruot.
+        self._start_timer()
+
+        # Log rõ voice đang dùng — khách có thể kiểm tra trước khi chờ lâu
+        _mode_labels = {"clone": "Clone", "design": "Design", "edge": "Edge TTS"}
+        _mode_str = _mode_labels.get(vp_cur.mode, vp_cur.mode or "Default") if vp_cur else "?"
+        if not kw:
+            self._log(f"⚠ Voice '{vp_cur.name if vp_cur else '?'}' dùng chế độ '{_mode_str}' "
+                      f"— không có ref_audio/instruct → sẽ dùng giọng mặc định!", "warn")
+        else:
+            self._log(f"🎤 SRT MagicVoice | Voice: {vp_cur.name if vp_cur else '?'} "
+                      f"[{_mode_str}] | {total} câu", "info")
 
         try:
-            if use_tl:
-                # ══ Timeline mode: ffmpeg adelay ═══════════════════════════
-                self._log("📐 Timeline mode (ffmpeg adelay) — chính xác tuyệt đối", "info")
-                ok = fail = skip = 0
-                seg_files = []   # [(start_ms, wav_path)]
+            # ══ Sequential mode: ghép tuần tự ═══════════════════════
+            self._log("🔗 Sequential mode — ghép tuần tự", "info")
+            import torch
+            # Canh bao lan dau tao voice trong phien (torch.compile warm-up)
+            if not getattr(Backend, '_warmed_up', False):
+                self._log("⚠ Lan dau tao voice: CUDA dang khoi dong (~2-5 phut). Vui long doi, dung tat app!", "warn")
+                self._st("Dang khoi dong CUDA lan dau — vui long doi...", "#f59e0b")
+            tensors   = []   # chi audio, khong silence
+            _gap_zero = (self.gap_var.get() == 0)
+            silence   = torch.zeros(1, int(self.gap_var.get() * SR / 1000))
+            all_parts = []   # list tensor audio rieng le
+            ok = fail = 0
 
-                for i, e in enumerate(entries):
-                    if self.cancel_ev.is_set(): break
+            # ── Tạo thư mục voice_le NGAY KHI BẮT ĐẦU (như batch tab) ──
+            _srt_stem_pre = Path(self.srt_path.get()).stem if self.srt_path.get() else ""
+            _name_pre = self._next_out_name_single(_srt_stem_pre)
+            try:
+                if self.out_ask_name_var.get():
+                    _v = self._ask_output_filename(_name_pre, "Tab SRT (Sequential mode)")
+                    if _v and _v.strip(): _name_pre = _v.strip()
+            except Exception: pass
+            _out_pre = self._out(name=_name_pre)
+            if _gap_zero:
+                _out_pre = str(Path(_out_pre).with_suffix(".wav"))
+            _parts_dir = Path(_out_pre).parent / (Path(_out_pre).stem + "_le")
+            _parts_dir.mkdir(parents=True, exist_ok=True)
+            self._log(f"📁 Thư mục voice lẻ: {_parts_dir}", "info")
+            _part_ext = ".wav" if _gap_zero else ".mp3"
 
-                    # Làm sạch text
-                    txt = e.text.strip()
-                    for ch in ["♪","♫","♩","♬","<i>","</i>","<b>","</b>","<u>","</u>"]:
-                        txt = txt.replace(ch, "")
-                    import re as _re
-                    txt = _re.sub(r"<[^>]+>", "", txt).strip()
+            entry_num = 0  # dem so entry SRT thuc su (co text)
+            _srt_timeline_data = []  # FIX v3.67: [(text_goc, dur_giay), ...] entry THANH CONG, de xuat .srt timeline sau
+            for i, e in enumerate(entries):
+                if self.cancel_ev.is_set(): break
+                txt = e.text.strip().replace('\n', ' ')
+                for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
+                    txt = txt.replace(ch, "")
+                # NOTE: KHONG normalize curly quotes - OmniVoice xu ly duoc U+201C/201D/2018/2019
+                # FIX 20: normalize \n -> space (SRT dung nhieu dong de hien thi, khong phai ngat cau)
+                # Backend.gen() tu reset seed(42)+cuda+empty_cache ben trong → khong can FIX 17 ben ngoai
+                if not txt: continue
+                _orig_txt_for_srt = txt  # FIX v3.67: text GOC (truoc phonetic/TTS-friendly) de xuat .srt timeline
+                txt = _apply_phonetic(txt)
+                # Toi uu doc (TTS-friendly): chi sua CHU trong entry nay,
+                # khong tao/xoa entry, khong dam timestamp.
+                # FIX v3.66 (audit 2026-07-24): bo qua TTS-friendly khi
+                # mode=clone - xem ghi chu day du o _do_text() (tab Van Ban).
+                if (getattr(self, "srt_tts_friendly_var", None) and self.srt_tts_friendly_var.get()
+                        and not (vp_cur and vp_cur.mode == "clone")):
+                    txt = _tts_friendly(txt)
 
-                    if not txt or len(txt) < 2:
-                        skip += 1
-                        self._log(f"  [{i+1}] ⏭ Bỏ qua (rỗng)", "warn")
-                        continue
-
-                    dur_ms = e.end_ms - e.start_ms
-                    if dur_ms < 100:
-                        skip += 1
-                        self._log(f"  [{i+1}] ⏭ Bỏ qua (slot {dur_ms}ms quá ngắn)", "warn")
-                        continue
-
-                    pct = i / total * 100
-                    self.after(0, lambda v=pct: self.pb.configure(value=v))
-                    self._st(f"[{i+1}/{total}] {txt[:45]}…")
-
+                entry_num += 1
+                self._st(f"[{entry_num}/{total}] {txt[:50]}")
+                self.after(0, lambda v=i/total*100: self.pb.configure(value=v))
+                try:
+                    # Entry ngan (< 350 chars): 1 chunk, khong trim → giu ngat nghi tu nhien OmniVoice (nhu v3.55)
+                    # Entry dai (>= 350 chars): split tai ranh gioi cau, trim per-chunk, noi bang silence 350ms
+                    _gap_zero = (self.gap_var.get() == 0)
+                    _segs = _smart_chunks(txt, SR)
+                    _seg_parts = []
+                    _seg_pauses = []
+                    for _ck, _pause_ms in _segs:
+                        _at, _vok, _vtr = _gen_verified(
+                            _ck, self.steps_var.get(), self._get_speed(),
+                            kw, log_fn=self._log)
+                        _seg_parts.append(_at)
+                        _seg_pauses.append(_pause_ms)
+                    if len(_seg_parts) > 1:
+                        # Entry dai: trim per-chunk roi noi — tranh double silence tai diem noi
+                        _joined = []
+                        for _pi, _pt in enumerate(_seg_parts):
+                            _joined.append(self._trim_tail(self._trim_sil(_pt)))
+                            if _pi < len(_seg_parts) - 1:
+                                _sil_ms = max(_seg_pauses[_pi], 80)
+                                _joined.append(torch.zeros(1, int(_sil_ms * SR / 1000)))
+                        _out_t = torch.cat(_joined, dim=-1)
+                    else:
+                        # Entry ngan (1 chunk): khong trim — giu ngat nghi tu nhien OmniVoice sinh ra (nhu v3.55)
+                        _out_t = _seg_parts[0] if _seg_parts else torch.zeros(1, 1)
+                    _le_silence = torch.zeros(1, int(self.gap_var.get() * SR / 1000))
+                    # Trim CHI leading silence (cat dau): loai bo OmniVoice natural leading sil
+                    # GIU trailing silence tu nhien de effective gap = natural_trailing + gap_var (nhu cu)
+                    if not _gap_zero:
+                        _wls = max(1, int(10 * SR / 1000))
+                        _abs_ls = _out_t.abs().squeeze(0)
+                        _n_ls = _abs_ls.shape[0]
+                        _pad_ls = (_wls - _n_ls % _wls) % _wls
+                        _sp_ls = torch.nn.functional.pad(_abs_ls, (0, _pad_ls))
+                        _rms_ls = _sp_ls.reshape(-1, _wls).mean(dim=1)
+                        _act_ls = (_rms_ls > 0.01).nonzero(as_tuple=False)
+                        _out_t_m = _out_t[:, _act_ls[0].item() * _wls:] if len(_act_ls) > 0 else _out_t
+                    else:
+                        _out_t_m = _out_t
+                    tensors.append(_out_t_m)
+                    if entry_num < _total_nonempty_s:
+                        tensors.append(silence)
+                    # FIX v3.67: do dai audio THAT cua entry nay (NGAY TRUOC khi
+                    # chen gap - dung SR that de doi ra giay), luu kem text goc
+                    # de xuat .srt timeline sau khi ghep xong.
+                    _srt_timeline_data.append((_orig_txt_for_srt, _out_t_m.shape[-1] / SR))
+                    ok += 1
+                    self._log(f"  [{entry_num}/{total}] ✓ {txt[:50]}", "info")
+                    # Lưu voice lẻ NGAY sau khi tạo xong — mọi file đều có gap ở đuôi
                     try:
-                        # FIX: Giam MAX_CH tu 300 -> 150 vi cau dai gay F5/OmniVoice
-                        # bo doan giua (vi du: "swollen shut, blood dried along her jaw,
-                        # and one shoe..." -> bi bo cum giua). 150 chars la nguong
-                        # an toan: cau dai duoc chia thanh 2-3 chunk, model xu ly tung
-                        # chunk ngan -> khong bo doan, ten rieng van trong cum lien tiep.
-                        MAX_CH = 150
-                        import re as _re2
-                        if len(txt) <= MAX_CH:
-                            chunks = [txt]
+                        _pi_path = str(_parts_dir / f"{entry_num:03d}{_part_ext}")
+                        if _gap_zero:
+                            _save_raw = _out_t
+                            _save_t = _save_raw.unsqueeze(0) if _save_raw.dim() == 1 else _save_raw
+                            to_wav(_save_t, _pi_path)
                         else:
-                            # Split at punctuation boundaries
-                            raw = _re2.split(r"(?<=[,،،.!?;])\s+", txt)
-                            chunks, buf = [], ""
-                            for s in raw:
-                                if not s.strip(): continue
-                                if not buf:
-                                    buf = s
-                                elif len(buf) + 1 + len(s) <= MAX_CH:
-                                    buf += " " + s
-                                else:
-                                    chunks.append(buf); buf = s
-                            if buf: chunks.append(buf)
-                            if not chunks: chunks = [txt]
+                            _save_raw = torch.cat([_out_t_m, _le_silence], dim=-1)
+                            _save_t = _save_raw.unsqueeze(0) if _save_raw.dim() == 1 else _save_raw
+                            to_mp3(_save_t, _pi_path)
+                    except Exception as _pe:
+                        self._log(f"  ⚠ Lưu lẻ {entry_num}: {_pe}", "warn")
+                    if ok == 1:
+                        Backend._warmed_up = True
+                except Exception as ex:
+                    fail += 1
+                    self._log(f"  [{entry_num}] ❌ {ex}", "err")
 
-                        # FIX: Timeline mode -> gen voi speed adapt theo slot duration
-                        # de audio output VUA voi timestamp SRT (khong dai hon).
-                        # Buoc 1: gen thu voi speed mac dinh
-                        # Buoc 2: neu audio dai hon slot -> gen lai voi speed cao hon
-                        # Cap speed o 1.4 de tranh meo giong qua nhuc
-                        import torch as _tc3
-                        base_speed = self._get_speed()
-                        slot_sec   = dur_ms / 1000.0
+            if tensors and not self.cancel_ev.is_set():
+                # Dùng output path + thư mục đã tạo sẵn từ trước vòng lặp
+                out      = _out_pre
+                parts_dir = _parts_dir
+                self._log(f"✅ {ok} voice lẻ → {parts_dir.name}/", "ok")
 
-                        def _gen_chunks(spd):
-                            tensors = []
-                            for chunk in chunks:
-                                a = Backend.gen(chunk,
-                                    num_step=self.steps_var.get(),
-                                    speed=spd, **kw)
-                                t = _to_tensor(a)
-                                if hasattr(self,"post_proc_var") and self.post_proc_var.get():
-                                    t = _post_process(t, SR)
-                                tensors.append(t)
-                            return tensors
-
-                        # Lan 1: gen voi speed binh thuong
-                        entry_tensors = _gen_chunks(base_speed)
-                        total_samples = sum(t.shape[1] for t in entry_tensors)
-                        actual_sec = total_samples / SR
-
-                        # Neu audio dai hon slot -> tinh speed moi va gen lai
-                        if use_tl and actual_sec > slot_sec * 1.05:  # 5% tolerance
-                            ratio = actual_sec / slot_sec
-                            new_speed = min(base_speed * ratio, 1.4)  # cap 1.4
-                            if new_speed > base_speed * 1.02:  # chi gen lai neu speed thay doi >2%
-                                self._log(
-                                    f"  [{i+1}] ⚡ audio {actual_sec:.1f}s > slot {slot_sec:.1f}s "
-                                    f"-> gen lai speed {new_speed:.2f}", "info")
-                                entry_tensors = _gen_chunks(new_speed)
-
-                        # Ghep tat ca chunks cua entry nay → 1 wav file
-                        if len(entry_tensors) > 1:
-                            entry_audio = _tc3.cat(entry_tensors, dim=1)
-                        else:
-                            entry_audio = entry_tensors[0]
-
-                        wp = str(tmp / f"seg_{i:04d}.wav")
-                        torchaudio.save(wp, entry_audio, SR)
-                        seg_files.append((e.start_ms, wp))
-
-                        ok += 1
-                        self._log(f"  [{i+1}/{total}] ✓ {len(chunks)} chunks @ {e.start}", "info")
-
-                    except Exception as ex:
-                        import traceback
-                        fail += 1
-                        self._log(f"  [{i+1}] ❌ {ex} | {txt[:40]}", "err")
-                        self._log(traceback.format_exc()[-200:], "err")
-
-                self._log(f"📊 ✓{ok} câu | ❌{fail} lỗi | ⏭{skip} bỏ qua", "info")
-
-                if not self.cancel_ev.is_set() and seg_files:
-                    # MOI: dat ten output theo naming global
-                    _name = self._next_out_name_single("SRT_timeline")
-                    try:
-                        if self.out_ask_name_var.get():
-                            _v = self._ask_output_filename(_name, "Tab SRT (Timeline mode)")
-                            if _v and _v.strip(): _name = _v.strip()
-                    except Exception:
-                        pass
-                    out = self._out(name=_name)
-                    # Tao thu muc _parts CUNG CAP VOI file output
-                    parts_dir = Path(out).parent / (Path(out).stem + "_parts")
-                    parts_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Luu tung part MP3 theo so thu tu SRT
-                    self._log(f"💾 Lưu {len(seg_files)} file lẻ → {parts_dir.name}/", "info")
-                    saved_parts = []
-                    for _pi, (_ms, _wav) in enumerate(seg_files):
-                        _part_mp3 = str(parts_dir / f"{_pi+1:03d}.mp3")
-                        try:
-                            _pt, _psr = _safe_audio_load(_wav)
-                            to_mp3(_pt, _part_mp3)
-                            saved_parts.append(_part_mp3)
-                        except Exception as _pe:
-                            self._log(f"  ⚠ Part {_pi+1}: {_pe}", "warn")
-                    self._log(f"✅ {len(saved_parts)} file lẻ → {parts_dir.name}/", "ok")
-
-                    # Ghép hoàn chỉnh
-                    self._log(f"🔗 Ghép {len(seg_files)} đoạn bằng ffmpeg adelay…", "info")
-                    self._ffmpeg_timeline(seg_files, out, SR)
-                    self._st(f"✅ Xong! {ok} câu → {Path(out).name}", P["green"])
-                    self._log(f"✅ Full: {out}", "ok")
-                    self._log(f"📁 Parts: {parts_dir}", "ok")
-                    self.after(0, lambda: self.pb.configure(value=100))
-                    self.after(100, lambda o=out, d=str(parts_dir): self._done_notify_srt(o, d))
-
-            else:
-                # ══ Sequential mode: ghép tuần tự ═══════════════════════
-                self._log("🔗 Sequential mode — ghép tuần tự", "info")
-                import torch
-                tensors   = []   # chi audio, khong silence
-                silence   = torch.zeros(1, int(self.gap_var.get() * SR / 1000))
-                all_parts = []   # list tensor audio rieng le
-                ok = fail = 0
-
-                entry_num = 0  # dem so entry SRT thuc su (co text)
-                for i, e in enumerate(entries):
-                    if self.cancel_ev.is_set(): break
-                    txt = e.text.strip()
-                    for ch in ["♪","♫","<i>","</i>","<b>","</b>"]:
-                        txt = txt.replace(ch, "")
-                    if not txt: continue
-
-                    entry_num += 1
-                    self._st(f"[{entry_num}/{total}] {txt[:50]}")
-                    self.after(0, lambda v=i/total*100: self.pb.configure(value=v))
-                    try:
-                        # Gen truc tiep - 1 SRT entry = 1 lan gen = 1 file part
-                        a = Backend.gen(txt,
-                                        num_step=self.steps_var.get(),
-                                        speed=self._get_speed(), **kw)
-                        audio_t = _to_tensor(a)
-                        all_parts.append(audio_t)  # 1 entry = 1 part
-                        tensors.append(audio_t)
-                        if entry_num < total:
-                            tensors.append(silence)
-                        ok += 1
-                        self._log(f"  [{entry_num}/{total}] ✓ {txt[:50]}", "info")
-                    except Exception as ex:
-                        fail += 1
-                        self._log(f"  [{entry_num}] ❌ {ex}", "err")
-
-                if tensors and not self.cancel_ev.is_set():
-                    # MOI: dat ten output theo naming global
-                    _name = self._next_out_name_single("SRT_sequential")
-                    try:
-                        if self.out_ask_name_var.get():
-                            _v = self._ask_output_filename(_name, "Tab SRT (Sequential mode)")
-                            if _v and _v.strip(): _name = _v.strip()
-                    except Exception:
-                        pass
-                    out = self._out(name=_name)
-                    parts_dir = Path(out).parent / (Path(out).stem + "_parts")
-                    parts_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Luu tung part MP3
-                    self._log(f"💾 Đang lưu {len(all_parts)} file lẻ → {parts_dir.name}/", "info")
-                    saved_ok = 0
-                    for _pi, _t in enumerate(all_parts):
-                        _part_path = str(parts_dir / f"{_pi+1:03d}.mp3")
-                        try:
-                            _out_t = _t.unsqueeze(0) if _t.dim()==1 else _t
-                            to_mp3(_out_t, _part_path)
-                            saved_ok += 1
-                        except Exception as _pe:
-                            self._log(f"  ⚠ Part {_pi+1}: {_pe}", "warn")
-                    self._log(f"✅ {saved_ok}/{len(all_parts)} file lẻ → {parts_dir.name}/", "ok")
-
-                    # Ghep hoan chinh
-                    final = torch.cat(tensors, dim=1)
-                    if hasattr(self,"post_proc_var") and self.post_proc_var.get():
-                        final = _post_process(final, SR)
+                # Ghep hoan chinh
+                final = torch.cat(tensors, dim=1)
+                if hasattr(self,"post_proc_var") and self.post_proc_var.get():
+                    final = _post_process(final, SR)
+                try:
                     self._save(final, out)
-                    self._st(f"✅ Xong! {ok} câu → {Path(out).name}", P["green"])
-                    self._log(f"✅ Full: {out}", "ok")
-                    self._log(f"📁 Parts: {parts_dir}", "ok")
-                    self.after(0, lambda: self.pb.configure(value=100))
-                    self._srt_notify_shown = False  # Reset de lan sau van hien popup
-                    self.after(100, lambda o=out, d=str(parts_dir): self._done_notify_srt(o, d))
+                    # Kiem tra file co thuc su duoc tao khong
+                    _saved = out if os.path.exists(out) else out.replace(".mp3", ".wav")
+                    if not os.path.exists(_saved):
+                        raise RuntimeError(f"File khong duoc tao tai: {out}")
+                    self._st(f"✅ Xong! {ok} câu → {Path(_saved).name}", P["green"])
+                    self._log(f"✅ Full: {_saved}", "ok")
+                    # FIX v3.67 (tinh nang moi, theo yeu cau anh Bac): xuat them
+                    # 1 file .srt co timeline khop CHINH XAC audio vua tao (SRT
+                    # goc bi lech vi giong doc tu nhien nhanh/cham khac). Text
+                    # moi dong = text GOC entry (khong transcribe/Whisper).
+                    # Hoan toan doc-only voi luong tao voice - khong sua gi ben tren.
+                    # FIX v3.67 (checkbox bat/tat): CHI xuat neu khach tich chon -
+                    # tat thi bo qua hoan toan, hanh vi giong het truoc khi co tinh nang.
+                    try:
+                        if self.srt_timeline_var.get():
+                            _srt_out_path = str(Path(_saved).with_suffix("")) + "_timeline.srt"
+                            _srt_saved_path, _srt_n = _export_srt_timeline(
+                                _srt_timeline_data, self.gap_var.get(), _srt_out_path)
+                            self._log(f"📝 SRT timeline ({_srt_n} dòng): {_srt_saved_path}", "ok")
+                    except Exception as _srt_exp_err:
+                        self._log(f"⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+                except Exception as _save_err:
+                    self._log(f"❌ Loi luu file: {_save_err}", "err")
+                    self._st(f"❌ Lỗi lưu file: {_save_err}", "red")
+                    self.after(0, lambda e=str(_save_err): messagebox.showerror(
+                        "Lỗi lưu file",
+                        f"Tạo voice xong nhưng không lưu được file!\n\n{e}\n\n"
+                        f"Thư mục output: {self.out_dir_var.get()}\n"
+                        "Kiểm tra: ffmpeg, quyền ghi thư mục, dung lượng ổ đĩa."))
+                self._log(f"📁 Parts: {parts_dir}", "ok")
+                self.after(0, lambda: self.pb.configure(value=100))
+                self._srt_notify_shown = False  # Reset de lan sau van hien popup
+                # Luu phien de goi lai
+                _vname = self.lib.profiles[self.sel_idx].name if 0 <= self.sel_idx < len(self.lib.profiles) else ""
+                self._save_session(self.srt_editor.get("1.0","end").strip(), _vname, self.out_dir_var.get())
+                self.after(100, lambda o=out, d=str(parts_dir): self._done_notify_srt(o, d))
 
         except RuntimeError as _srt_rt:
             _msg = str(_srt_rt)
@@ -6193,66 +10395,9 @@ class App(tk.Tk):
             self.after(0, lambda e=str(_srt_err): messagebox.showerror(
                 "Loi tao SRT", f"{e[:300]}"))
         finally:
+            self._stop_timer()
             shutil.rmtree(tmp, ignore_errors=True)
             self._busy(False)
-
-    def _ffmpeg_timeline(self, seg_files: list, out: str, sr: int = 24000):
-        """
-        Ghép audio theo timeline SRT bằng PyTorch trong RAM.
-        Audio cua moi entry da duoc gen voi speed adapt vua slot,
-        nen o day chi can dat dung start_ms - khong overlap nua.
-        """
-        import torch, torchaudio
-
-        if not seg_files:
-            return
-
-        self._log(f"⚡ Ghép {len(seg_files)} đoạn theo timeline…", "info")
-        t0 = time.time()
-
-        # Tinh tong do dai buffer can thiet
-        max_end_sample = 0
-        loaded = []
-        for start_ms, wav_path in seg_files:
-            try:
-                tensor, file_sr = _safe_audio_load(wav_path)
-                if file_sr != sr:
-                    tensor = torchaudio.functional.resample(tensor, file_sr, sr)
-                if tensor.shape[0] > 1:
-                    tensor = tensor.mean(dim=0, keepdim=True)
-                start_sample = int(start_ms * sr / 1000)
-                end_sample   = start_sample + tensor.shape[1]
-                max_end_sample = max(max_end_sample, end_sample)
-                loaded.append((start_sample, tensor))
-            except Exception as e:
-                self._log(f"  ⚠ Bỏ qua: {e}", "warn")
-
-        if not loaded:
-            return
-
-        total_samples = max_end_sample + int(0.5 * sr)
-        buffer = torch.zeros(1, total_samples)
-
-        # Mix (cong) thay vi gan "=" de neu co overlap nho thi 2 audio chong nhau
-        # khong cat audio truoc. Voi speed adapt o tren, overlap se rat hiem.
-        for start_sample, tensor in loaded:
-            end_sample = min(start_sample + tensor.shape[1], total_samples)
-            copy_len   = end_sample - start_sample
-            if copy_len > 0:
-                buffer[0, start_sample:end_sample] += tensor[0, :copy_len]
-
-        # Normalize neu peak qua 0.95 (do mix co the lam tang amplitude)
-        peak = buffer.abs().max()
-        if peak > 0.95:
-            buffer = buffer * (0.891 / peak)
-
-        if out.endswith(".mp3"):
-            to_mp3(buffer, out)
-        else:
-            to_wav(buffer, out)
-
-        elapsed = time.time() - t0
-        self._log(f"  ✓ Ghép xong trong {elapsed:.1f}s", "ok")
 
     # ══ MOI: Naming helpers & dialog TOAN CUC (ap dung cho moi tab) ══
     def _compute_output_name(self, src_stem: str = "", idx: int = 0) -> str:
@@ -6279,13 +10424,14 @@ class App(tk.Tk):
     def _next_out_name_single(self, src_stem: str = "") -> str:
         """Sinh ten cho 1 file don le (tab Text/SRT).
         Neu mode='prefix' -> dung counter offset + quet thu muc de khong trung so.
-        Neu mode='keep'  -> dung src_stem."""
+        Neu mode='keep' va co src_stem -> dung src_stem.
+        Neu mode='keep' va khong co src_stem (tab Text/SRT ko co file nguon) -> prefix."""
         try:
             mode = self.out_name_mode.get()
         except Exception:
             mode = "prefix"
-        if mode == "keep":
-            return (src_stem or "output").strip() or "output"
+        if mode == "keep" and src_stem.strip():
+            return src_stem.strip()
         # prefix mode: tim so thap nhat chua bi dung trong out_dir
         try:
             pr  = (self.out_prefix_var.get() or "voice_").strip() or "voice_"
@@ -6450,6 +10596,16 @@ class App(tk.Tk):
         self.is_running = True
         self._running_tab = "batch"
         self.after(0, self._refresh_tab_indicators)
+        # Hiện tiến độ trong preview box
+        try:
+            self.batch_preview.config(state="normal")
+            self.batch_preview.delete("1.0", "end")
+            self.batch_preview.insert("1.0", f"⏳ Đang chuẩn bị batch {len(self._txt_files)} file...")
+            self.batch_preview.config(state="disabled")
+            self.batch_preview_info.config(text=f"0 / {len(self._txt_files)} file")
+        except Exception:
+            pass
+
         # MOI: thong bao ro rang de user biet da start
         self._log(f"▶ Bắt đầu batch: {len(self._txt_files)} file", "info")
         self._st(f"▶ Đang chuẩn bị batch ({len(self._txt_files)} file)...", P["blue"])
@@ -6511,22 +10667,24 @@ class App(tk.Tk):
         """DEPRECATED: dung _ask_output_filename."""
         return self._ask_output_filename(default_name, Path(src_path).name)
 
-    def _batch_gen_srt_file(self, srt_path: str, kw: dict):
+    def _batch_gen_srt_file(self, srt_path: str, kw: dict, parts_dir: str = None, on_entry_progress=None):
         """Sinh audio tu 1 file .srt: parse -> gen tung entry -> concat.
         Tra ve (final_tensor, entry_tensors) hoac (None, None) neu rong/huy.
           final_tensor: tensor da noi + silence giua cac entry
-          entry_tensors: list[tensor] tung entry rieng le -> de luu _parts/
+          entry_tensors: list[tensor] tung entry rieng le
+          parts_dir: neu co, luu tung entry ngay vao parts_dir/001.mp3, 002.mp3...
+          on_entry_progress(j, status, total_e, part_idx): callback tien do tung dong
         Khong post-process (se lam trong _save)."""
         import torch
         try:
             raw = Path(srt_path).read_text("utf-8").strip()
         except Exception:
             raw = Path(srt_path).read_text("utf-8", errors="ignore").strip()
-        if not raw: return None, None
+        if not raw: return None, None, None
         entries = parse_srt(raw)
         if not entries:
             # Fallback: coi nhu van ban thuong, tach theo dau cau
-            return None, None
+            return None, None, None
 
         SR    = 24000
         gap   = int(self.gap_var.get())
@@ -6535,11 +10693,15 @@ class App(tk.Tk):
         silence = torch.zeros(1, int(gap * SR / 1000))
 
         tensors = []        # de ghep final (co silence giua)
-        entry_tensors = []  # tung entry rieng -> luu _parts/
-        ok = skip = 0
+        entry_tensors = []  # tung entry rieng
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): text GOC tuong ung
+        # tung entry_tensors, dung xuat .srt timeline sau (xem _run_batch).
+        entry_texts = []
+        ok = skip = part_idx = 0
         total_e = len(entries)
+        _total_nonempty = sum(1 for e in entries if e.text.strip() and len(e.text.strip()) >= 2)
         for j, e in enumerate(entries):
-            if self.cancel_ev.is_set(): return None, None
+            if self.cancel_ev.is_set(): return None, None, None
             txt = e.text.strip()
             # Lam sach nhac cu / tag HTML
             import re as _re
@@ -6549,24 +10711,363 @@ class App(tk.Tk):
             if not txt or len(txt) < 2:
                 skip += 1
                 continue
+            _orig_txt_for_srt = txt  # FIX v3.68: text GOC truoc phonetic/TTS-friendly, dung xuat .srt timeline
+            txt = _apply_phonetic(txt)
+            # FIX v3.66 (audit 2026-07-24): bo qua TTS-friendly khi mode=
+            # clone - ham nay CHI duoc goi cho profile khong phai edge (xem
+            # _run_batch), nen co the la clone hoac design. Xem ghi chu day
+            # du o _do_text() (tab Van Ban).
+            _vp_batch_srt = self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None
+            if (getattr(self, "srt_tts_friendly_var", None) and self.srt_tts_friendly_var.get()
+                    and not (_vp_batch_srt and _vp_batch_srt.mode == "clone")):
+                txt = _tts_friendly(txt)
+            if on_entry_progress:
+                on_entry_progress(j, "start", total_e, part_idx)
             try:
-                a = Backend.gen(txt, num_step=steps, speed=speed, **kw)
-                t = _to_tensor(a)
-                if t is None or t.abs().max() < 0.0001:
+                # Dung _smart_chunks de tranh OmniVoice _generate_chunked()
+                import torch as _tch
+                _bsegs = _smart_chunks(txt, SR)
+                _bparts = []
+                _b_multi = len(_bsegs) > 1  # entry dai -> nhieu chunk
+                for _bck, _bpause in _bsegs:
+                    # FIX v3.66 (hieu nang 2026-07-24): dung _gen_cached thay
+                    # Backend.gen() truc tiep - tranh Clone Voice phien am lai
+                    # audio mau moi chunk (xem ghi chu day du o _gen_cached).
+                    _ba = _gen_cached(_bck, steps, speed, kw)
+                    _bt = _to_tensor(_ba)
+                    if _bt is None or _bt.abs().max() < 0.0001:
+                        continue
+                    if _b_multi:
+                        # Entry dai: trim trailing silence tung chunk tranh double silence tai diem noi
+                        _bt_s = _bt.abs().squeeze(0)
+                        _win = max(1, int(10 * SR / 1000))
+                        _pad = (_win - _bt_s.shape[0] % _win) % _win
+                        _sp = _tch.nn.functional.pad(_bt_s, (0, _pad))
+                        _rms = _sp.reshape(-1, _win).mean(dim=1)
+                        _act = (_rms > 0.01).nonzero(as_tuple=False)
+                        if len(_act) > 0:
+                            _end = min(_bt_s.shape[0], (_act[-1].item() + 1) * _win)
+                            _bt = _bt[:, :_end]
+                    # Entry ngan (1 chunk): giu audio tho, khong trim — bao toan ngat nghi tu nhien OmniVoice (nhu v3.55)
+                    _bparts.append(_bt)
+                    if _bpause > 0:
+                        _bparts.append(_tch.zeros(1, int(_bpause * SR / 1000)))
+                if not _bparts:
+                    if on_entry_progress:
+                        on_entry_progress(j, "skip", total_e, part_idx)
                     skip += 1; continue
-                # Luu vao ca 2 list
-                tensors.append(t)
-                entry_tensors.append(t)   # MOI: luu rieng cho _parts
-                if j < total_e - 1:
+                t = _tch.cat(_bparts, dim=-1)
+                if t is None or t.abs().max() < 0.0001:
+                    if on_entry_progress:
+                        on_entry_progress(j, "skip", total_e, part_idx)
+                    skip += 1; continue
+                # Trim CHI leading silence (cat dau, giu trailing tu nhien cua OmniVoice)
+                # → effective gap = OmniVoice_natural_trailing + gap_var (nhu phien ban cu)
+                if gap > 0:
+                    _wlb = max(1, int(10 * SR / 1000))
+                    _abs_lb = t.abs().squeeze(0)
+                    _n_lb = _abs_lb.shape[0]
+                    _pad_lb = (_wlb - _n_lb % _wlb) % _wlb
+                    _sp_lb = _tch.nn.functional.pad(_abs_lb, (0, _pad_lb))
+                    _rms_lb = _sp_lb.reshape(-1, _wlb).mean(dim=1)
+                    _act_lb = (_rms_lb > 0.01).nonzero(as_tuple=False)
+                    _t_clean = t[:, _act_lb[0].item() * _wlb:] if len(_act_lb) > 0 else t
+                else:
+                    _t_clean = t
+                tensors.append(_t_clean)
+                entry_tensors.append(_t_clean)
+                entry_texts.append(_orig_txt_for_srt)
+                part_idx += 1
+                if parts_dir:
+                    try:
+                        _mp3 = os.path.join(parts_dir, f"{part_idx:03d}.mp3")
+                        if gap > 0:
+                            _gap_sil = _tch.zeros(1, int(gap * SR / 1000))
+                            _out_t = _tch.cat([_t_clean, _gap_sil], dim=-1)
+                        else:
+                            _out_t = _t_clean
+                        _out_t = _out_t.unsqueeze(0) if _out_t.dim() == 1 else _out_t
+                        to_mp3(_out_t, _mp3)
+                    except Exception:
+                        pass
+                if on_entry_progress:
+                    on_entry_progress(j, "ok", total_e, part_idx)
+                if part_idx < _total_nonempty:
                     tensors.append(silence)
                 ok += 1
             except Exception as _ge:
                 self._log(f"    ⚠ entry {j+1}: {_ge}", "warn")
+                if on_entry_progress:
+                    on_entry_progress(j, "skip", total_e, part_idx)
                 skip += 1
         if not tensors:
-            return None, None
+            return None, None, None
         self._log(f"    🎞 {ok} entry OK, {skip} bỏ qua → ghép", "info")
-        return torch.cat(tensors, dim=1), entry_tensors
+        return torch.cat(tensors, dim=1), entry_tensors, entry_texts
+
+    def _batch_gen_srt_file_edge(self, srt_path: str, vp, parts_dir: str = None, on_entry_progress=None) -> tuple:
+        """Edge TTS version of _batch_gen_srt_file. Returns (final_tensor, entry_tensors)."""
+        import asyncio, tempfile, torch, torchaudio as _ta, re as _re
+        voice_id = "en-US-AriaNeural"
+        if vp.instruct and vp.instruct.startswith("edge:"):
+            voice_id = vp.instruct.replace("edge:", "").strip()
+        try:
+            raw = Path(srt_path).read_text("utf-8").strip()
+        except Exception:
+            raw = Path(srt_path).read_text("utf-8", errors="ignore").strip()
+        if not raw: return None, None, None
+        entries = parse_srt(raw)
+        if not entries: return None, None, None
+
+        SR = 24000
+        gap_be = int(self.gap_var.get())
+        silence = torch.zeros(1, int(gap_be * SR / 1000))
+        tensors = []
+        entry_tensors = []
+        entry_texts = []
+        ok = skip = 0
+        total_e = len(entries)
+        _total_nonempty_be = sum(1 for e in entries if e.text.strip() and len(e.text.strip()) >= 2)
+
+        async def _gen_one(text, voice):
+            import edge_tts, asyncio as _aio, os as _os, wave as _wave, inspect as _ins
+            import torchaudio as _ta_one
+            _use_pcm = 'codec' in _ins.signature(edge_tts.Communicate.__init__).parameters
+            last_err = None
+            for _attempt in range(3):
+                tmp_wav = tempfile.mktemp(suffix=".wav")
+                tmp_pcm = tmp_wav + ".pcm"
+                tmp_mp3 = tmp_wav + ".mp3"
+                try:
+                    if _use_pcm:
+                        comm = edge_tts.Communicate(text, voice,
+                                                    codec="audio-24khz-16bit-mono-pcm")
+                        await comm.save(tmp_pcm)
+                        if _os.path.exists(tmp_pcm):
+                            sz = _os.path.getsize(tmp_pcm)
+                            if sz >= 100:
+                                with open(tmp_pcm, "rb") as _f:
+                                    _pcm = _f.read()
+                                with _wave.open(tmp_wav, "wb") as _wf:
+                                    _wf.setnchannels(1); _wf.setsampwidth(2)
+                                    _wf.setframerate(24000); _wf.writeframes(_pcm)
+                                try: _os.remove(tmp_pcm)
+                                except Exception: pass
+                                return tmp_wav
+                            else:
+                                last_err = f"file rong ({sz} bytes)"
+                        else:
+                            last_err = "file khong duoc tao"
+                    else:
+                        comm = edge_tts.Communicate(text, voice)
+                        await comm.save(tmp_mp3)
+                        if _os.path.exists(tmp_mp3):
+                            sz = _os.path.getsize(tmp_mp3)
+                            if sz >= 100:
+                                import imageio_ffmpeg as _iff
+                                import subprocess as _sp
+                                _wav_tmp = tmp_mp3 + "_24k.wav"
+                                try:
+                                    _sp.run(
+                                        [_iff.get_ffmpeg_exe(), '-i', tmp_mp3,
+                                         '-ar', '24000', '-ac', '1', '-f', 'wav',
+                                         _wav_tmp, '-y', '-loglevel', 'quiet'],
+                                        timeout=30, check=True,
+                                        creationflags=0x08000000)
+                                    _wv, _sr = _safe_audio_load(_wav_tmp)
+                                finally:
+                                    try: _os.remove(_wav_tmp)
+                                    except Exception: pass
+                                if _sr != 24000:
+                                    _wv = _ta_one.functional.resample(_wv, _sr, 24000)
+                                if _wv.shape[0] > 1:
+                                    _wv = _wv.mean(dim=0, keepdim=True)
+                                import soundfile as _sf_sv2
+                                _sf_sv2.write(tmp_wav, _wv.squeeze().numpy(), 24000, subtype='PCM_16')
+                                try: _os.remove(tmp_mp3)
+                                except Exception: pass
+                                return tmp_wav
+                            else:
+                                last_err = f"file rong ({sz} bytes)"
+                        else:
+                            last_err = "file khong duoc tao"
+                except Exception as e:
+                    last_err = str(e)
+                finally:
+                    for _p in [tmp_pcm, tmp_mp3]:
+                        try:
+                            if _os.path.exists(_p): _os.remove(_p)
+                        except Exception: pass
+                if _attempt < 2:
+                    await _aio.sleep(1.5 * (_attempt + 1))
+            self._log(f"   ⚠ Edge TTS that bai sau 3 lan: {last_err}", "warn")
+            return None
+
+        self._log(f"🌐 Batch SRT Edge TTS | Voice: {voice_id}", "info")
+        part_idx = 0
+        for j, e in enumerate(entries):
+            if self.cancel_ev.is_set(): return None, None, None
+            txt = e.text.strip()
+            for ch in ["♪","♫","♩","♬"]:
+                txt = txt.replace(ch, "")
+            txt = _re.sub(r"<[^>]+>", "", txt).strip()
+            if not txt or len(txt) < 2:
+                skip += 1; continue
+            _orig_txt_for_srt = txt  # FIX v3.68: text GOC, dung xuat .srt timeline
+            txt = _apply_phonetic(txt)
+            # FIX v3.66: Edge TTS khong tach cau dai (rule B).
+            if getattr(self, "srt_tts_friendly_var", None) and self.srt_tts_friendly_var.get():
+                txt = _tts_friendly(txt, split_long_sentences=False)
+            if on_entry_progress:
+                on_entry_progress(j, "start", total_e, part_idx)
+            try:
+                txt_for_tts = _edge_smart_pause(txt, max_words=8)
+                import sys as _sys, asyncio as _asyncio_b
+                if _sys.platform == "win32":
+                    _asyncio_b.set_event_loop_policy(_asyncio_b.WindowsSelectorEventLoopPolicy())
+                _evloop_b = _asyncio_b.new_event_loop()
+                try:
+                    tmp_wav = _evloop_b.run_until_complete(_gen_one(txt_for_tts, voice_id))
+                finally:
+                    _evloop_b.close()
+                if not tmp_wav or not Path(tmp_wav).exists():
+                    # FIX v3.68 (theo anh Bac yeu cau 2026-07-30, khach bi
+                    # antivirus/firewall chan ket noi Microsoft - khong lien
+                    # quan toc do mang): dong bo voi tab Van Ban/SRT - tu dong
+                    # dung MagicVoice thay the entry loi, khong bo qua/raise.
+                    self._log(f"  🔄 Edge TTS lỗi — dùng MagicVoice thay thế", "warn")
+                    try:
+                        kw = self._vkw()
+                        t = Backend.gen(txt_for_tts, **kw,
+                                         num_step=self._cfg.get("steps", 24),
+                                         speed=self._get_speed())
+                    except Exception as _fbe:
+                        raise RuntimeError(f"Edge TTS loi va Fallback MagicVoice cung loi: {_fbe}")
+                else:
+                    t, sr = _safe_audio_load(tmp_wav)
+                    try: Path(tmp_wav).unlink()
+                    except: pass
+                    if sr != SR:
+                        t = _ta.functional.resample(t, sr, SR)
+                    if t.shape[0] > 1:
+                        t = t.mean(dim=0, keepdim=True)
+                if t is None or t.abs().max() < 0.0001:
+                    if on_entry_progress:
+                        on_entry_progress(j, "skip", total_e, part_idx)
+                    skip += 1; continue
+                tensors.append(t)
+                entry_tensors.append(t)
+                entry_texts.append(_orig_txt_for_srt)
+                part_idx += 1
+                if parts_dir:
+                    try:
+                        _mp3 = os.path.join(parts_dir, f"{part_idx:03d}.mp3")
+                        if gap_be > 0:
+                            _gap_be = torch.zeros(1, int(gap_be * SR / 1000))
+                            _out_t = torch.cat([t, _gap_be], dim=-1)
+                        else:
+                            _out_t = t
+                        _out_t = _out_t.unsqueeze(0) if _out_t.dim() == 1 else _out_t
+                        to_mp3(_out_t, _mp3)
+                    except Exception:
+                        pass
+                if on_entry_progress:
+                    on_entry_progress(j, "ok", total_e, part_idx)
+                if part_idx < _total_nonempty_be:
+                    tensors.append(silence)
+                ok += 1
+            except Exception as _ge:
+                self._log(f"    ⚠ entry {j+1}: {_ge}", "warn")
+                if on_entry_progress:
+                    on_entry_progress(j, "skip", total_e, part_idx)
+                skip += 1
+
+        if not tensors:
+            return None, None, None
+        self._log(f"    🎞 {ok} entry OK (Edge TTS), {skip} bỏ qua → ghép", "info")
+        return torch.cat(tensors, dim=1), entry_tensors, entry_texts
+
+    def _batch_gen_srt_file_fast(self, srt_path: str, vp, parts_dir: str = None, on_entry_progress=None) -> tuple:
+        """FIX v3.68 (tinh nang moi, theo yeu cau anh Bac): mode "MagicVoice
+        Nhanh" version cua _batch_gen_srt_file - phong theo ban Edge nhung
+        don gian hon nhieu (khong can async/retry-mang, _fast_generate()
+        chay dong bo local). Returns (final_tensor, entry_tensors)."""
+        import torch, re as _re
+        voice_id = FAST_VOICES_LIST[0][0]
+        if vp.instruct and vp.instruct.startswith("fast:"):
+            voice_id = vp.instruct.replace("fast:", "").strip()
+        try:
+            raw = Path(srt_path).read_text("utf-8").strip()
+        except Exception:
+            raw = Path(srt_path).read_text("utf-8", errors="ignore").strip()
+        if not raw: return None, None, None
+        entries = parse_srt(raw)
+        if not entries: return None, None, None
+
+        SR = 24000
+        gap_bf = int(self.gap_var.get())
+        silence = torch.zeros(1, int(gap_bf * SR / 1000))
+        tensors = []
+        entry_tensors = []
+        entry_texts = []
+        ok = skip = 0
+        total_e = len(entries)
+        _total_nonempty_bf = sum(1 for e in entries if e.text.strip() and len(e.text.strip()) >= 2)
+
+        self._log(f"⚡ Batch SRT MG Nhanh | Voice: {voice_id}", "info")
+        part_idx = 0
+        speed = self._get_speed()
+        for j, e in enumerate(entries):
+            if self.cancel_ev.is_set(): return None, None, None
+            txt = e.text.strip()
+            for ch in ["♪","♫","♩","♬"]:
+                txt = txt.replace(ch, "")
+            txt = _re.sub(r"<[^>]+>", "", txt).strip()
+            if not txt or len(txt) < 2:
+                skip += 1; continue
+            _orig_txt_for_srt = txt  # FIX v3.68: text GOC, dung xuat .srt timeline
+            txt = _apply_phonetic(txt)
+            if getattr(self, "srt_tts_friendly_var", None) and self.srt_tts_friendly_var.get():
+                txt = _tts_friendly(txt, split_long_sentences=False)
+            if on_entry_progress:
+                on_entry_progress(j, "start", total_e, part_idx)
+            try:
+                t = _fast_generate(txt, voice_id, speed=speed)
+                if t is None or t.abs().max() < 0.0001:
+                    if on_entry_progress:
+                        on_entry_progress(j, "skip", total_e, part_idx)
+                    skip += 1; continue
+                tensors.append(t)
+                entry_tensors.append(t)
+                entry_texts.append(_orig_txt_for_srt)
+                part_idx += 1
+                if parts_dir:
+                    try:
+                        _mp3 = os.path.join(parts_dir, f"{part_idx:03d}.mp3")
+                        if gap_bf > 0:
+                            _gap_bf = torch.zeros(1, int(gap_bf * SR / 1000))
+                            _out_t = torch.cat([t, _gap_bf], dim=-1)
+                        else:
+                            _out_t = t
+                        _out_t = _out_t.unsqueeze(0) if _out_t.dim() == 1 else _out_t
+                        to_mp3(_out_t, _mp3)
+                    except Exception:
+                        pass
+                if on_entry_progress:
+                    on_entry_progress(j, "ok", total_e, part_idx)
+                if part_idx < _total_nonempty_bf:
+                    tensors.append(silence)
+                ok += 1
+            except Exception as _ge:
+                self._log(f"    ⚠ entry {j+1}: {_ge}", "warn")
+                if on_entry_progress:
+                    on_entry_progress(j, "skip", total_e, part_idx)
+                skip += 1
+
+        if not tensors:
+            return None, None, None
+        self._log(f"    🎞 {ok} entry OK (MG Nhanh), {skip} bỏ qua → ghép", "info")
+        return torch.cat(tensors, dim=1), entry_tensors, entry_texts
 
     def _run_batch(self):
         # MOI: kiem tra license truoc
@@ -6576,23 +11077,74 @@ class App(tk.Tk):
             self.after(0, self._refresh_tab_indicators)
             return
         self._busy(True); self.cancel_ev.clear()
+        # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): bo dem gio da co san
+        # (self._timer_label) nhung truoc day CHI noi cho tab Van Ban - tab
+        # Hang Loat da co san 1 loi goi _stop_timer() "mo coi" (khong co
+        # _start_timer() tuong ung) o cuoi ham, gio noi dung lai.
+        self._start_timer()
         total=len(self._txt_files); ok=fail=skipped=0
-        ask_name  = False
-        try:
-            ask_name = bool(self.out_ask_name_var.get())   # MOI: global
-        except Exception:
-            pass
+
+        # FIX v3.68 (theo anh Bac bao loi 2026-07-26, ra soat toan dien):
+        # BUG THAT SU giong het loi da sua o tab Van Ban/SRT - Batch truoc
+        # day CHI doc giong tu self.lib.profiles[self.sel_idx] (preset dang
+        # chon trong "Cai Dat San"), BO QUA HOAN TOAN che do dang chon o
+        # sidebar (self.tts_mode/fast_voice_var/edge_voice_var). Neu khach
+        # chi moi BAM CHON giong o sidebar (MG Nhanh/Edge) ma CHUA duoc luu
+        # thanh preset (hoac preset dang chon trong "Cai Dat San" la 1 giong
+        # khac), Batch se am tham dung SAI giong. Sua: uu tien che do sidebar
+        # dang chon, giong het pattern da dung o _do_srt().
+        _batch_mode = self.tts_mode.get() if hasattr(self, "tts_mode") else "omnivoice"
+        _batch_override_vp = None
+        if _batch_mode == "edge" and hasattr(self, "edge_voice_var") and self.edge_voice_var.get():
+            _bec = self.edge_voice_var.get()
+            class _BatchFakeVPEdge:
+                mode = "edge"
+                instruct = f"edge:{_bec}"
+                name = _bec
+            _batch_override_vp = _BatchFakeVPEdge()
+        elif _batch_mode == "fast" and hasattr(self, "fast_voice_var") and self.fast_voice_var.get():
+            _bfc = self.fast_voice_var.get()
+            class _BatchFakeVPFast:
+                mode = "fast"
+                instruct = f"fast:{_bfc}"
+                name = _bfc
+            _batch_override_vp = _BatchFakeVPFast()
 
         # Chuan bi index cho mode tien to: chi dem file TXT+SRT hop le
-        try:
-            kw=self._vkw()
-        except Exception as _kw_err:
-            self._log(f"❌ Lỗi voice: {_kw_err}", "err")
-            self._busy(False)
-            self._running_tab = None
-            return
+        # (bo qua hoan toan _vkw() khi sidebar dang o mode edge/fast - _vkw()
+        # doc theo preset MagicVoice dang chon trong "Cai Dat San", co the
+        # thieu ref_audio/instruct va bao loi oan, du khong lien quan gi den
+        # giong se dung that su)
+        if _batch_override_vp is not None:
+            kw = {}
+        else:
+            try:
+                kw=self._vkw()
+            except Exception as _kw_err:
+                self._log(f"❌ Lỗi voice: {_kw_err}", "err")
+                self._stop_timer()
+                self._busy(False)
+                self._running_tab = None
+                return
+
+        # Diagnostic: hien thi voice dang dung de de debug "giong la"
+        _vp_diag = _batch_override_vp or (self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None)
+        _mode_labels_b = {"clone": "Clone", "design": "Design", "edge": "Edge TTS", "fast": "MG Nhanh"}
+        _mode_str_b = _mode_labels_b.get(_vp_diag.mode, _vp_diag.mode or "Default") if _vp_diag else "?"
+        if not kw and _vp_diag and _vp_diag.mode not in ("edge","fast"):
+            self._log(f"⚠ Batch | Voice '{_vp_diag.name}' [{_mode_str_b}] — không có ref_audio/instruct → sẽ dùng giọng mặc định!", "warn")
+        elif _vp_diag:
+            _ref_name_b = Path(kw.get("ref_audio","")).name if "ref_audio" in kw else ""
+            self._log(
+                f"🎤 Batch | Voice: {_vp_diag.name} [{_mode_str_b}]" +
+                (f" | ref: {_ref_name_b}" if _ref_name_b else "") +
+                f" | {total} file", "info")
 
         fmt = self.fmt_var.get()
+        ask_name = False  # Batch luôn dùng tên mặc định, không hỏi
+        _total_files = len(self._txt_files)
+        _done_files  = []  # track tên file đã xong để update preview
+
         try:
             for i,fp in enumerate(self._txt_files):
                 if self.cancel_ev.is_set():
@@ -6611,8 +11163,8 @@ class App(tk.Tk):
                 except Exception:
                     pass
 
-                # Tinh ten output (dung helper global)
-                default_name = self._compute_output_name(stem, i)
+                # Batch luon dat ten theo ten file input (khong phu thuoc out_name_mode)
+                default_name = (stem or f"output_{i+1:02d}").strip() or f"output_{i+1:02d}"
                 if ask_name:
                     v = self._ask_output_filename(default_name, Path(fp).name)
                     if v is None or v.strip() == "":
@@ -6620,51 +11172,281 @@ class App(tk.Tk):
                         skipped += 1; continue
                     default_name = v.strip()
 
+                # Tạo thư mục ngay khi bắt đầu xử lý file này
+                _stem_dir     = os.path.join(self.out_dir_var.get(), default_name)
+                _parts_dir_srt = os.path.join(_stem_dir, "voice_le") if ext == ".srt" else None
+                try:
+                    os.makedirs(_parts_dir_srt if _parts_dir_srt else _stem_dir, exist_ok=True)
+                except Exception:
+                    pass
+
+                # Preview: bắt đầu xử lý file này
+                def _show_start(sn=default_name, fi=i, tot=_total_files, nd=len(_done_files)):
+                    try:
+                        self.batch_preview.config(state="normal")
+                        self.batch_preview.delete("1.0", "end")
+                        self.batch_preview.insert("1.0", f"⏳ Đang tạo voice {sn}... ({fi+1}/{tot})")
+                        self.batch_preview.config(state="disabled")
+                        self.batch_preview_info.config(text=f"{nd} / {tot} file")
+                    except Exception:
+                        pass
+                self.after(0, _show_start)
+
+                # Callback tiến độ từng dòng SRT
+                _done_entries = []  # list of (j, part_idx) đã hoàn thành
+                _cur_e        = [None]  # (j, total_e) đang tạo
+
+                def _on_ep(j, status, total_e, part_idx, sn=default_name, fi=i, tot=_total_files):
+                    if status == "start":
+                        _cur_e[0] = (j, total_e)
+                        _snap_done = list(_done_entries)
+                        _snap_cur  = (j, total_e)
+                    elif status == "ok":
+                        _done_entries.append((j, part_idx))
+                        _cur_e[0]  = None
+                        _snap_done = list(_done_entries)
+                        _snap_cur  = None
+                    else:
+                        _cur_e[0]  = None
+                        _snap_done = list(_done_entries)
+                        _snap_cur  = None
+                    def _upd(done=_snap_done, cur=_snap_cur, stem_name=sn, fi=fi, tot=tot):
+                        try:
+                            lines = [f"⏳ Đang tạo voice {stem_name}... ({fi+1}/{tot})"]
+                            for (_dj, _dp) in done:
+                                lines.append(f"  ✅ Dòng {_dj+1} → {_dp:03d}.mp3")
+                            if cur:
+                                lines.append(f"  ⏳ Dòng {cur[0]+1}/{cur[1]} đang tạo...")
+                            self.batch_preview.config(state="normal")
+                            self.batch_preview.delete("1.0", "end")
+                            self.batch_preview.insert("1.0", "\n".join(lines))
+                            self.batch_preview.config(state="disabled")
+                        except Exception:
+                            pass
+                    self.after(0, _upd)
+
                 try:
                     tensor = None
-                    entry_tensors = None   # MOI: cho SRT - list tensor tung entry
+                    entry_tensors = None
+                    # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): [(text, dur)]
+                    # dung xuat .srt timeline sau (chi dung cho nhanh .txt -
+                    # nhanh .srt tu xay dung tu entry_tensors/entry_texts ngay
+                    # ben duoi, xem sau khoi if/else nay).
+                    _srt_timeline_data = []
                     if ext == ".srt":
-                        tensor, entry_tensors = self._batch_gen_srt_file(fp, kw)
+                        _vp_b = _batch_override_vp or (self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None)
+                        entry_texts = None
+                        if _vp_b and _vp_b.mode == "edge":
+                            tensor, entry_tensors, entry_texts = self._batch_gen_srt_file_edge(fp, _vp_b, _parts_dir_srt, _on_ep)
+                        elif _vp_b and _vp_b.mode == "fast":
+                            tensor, entry_tensors, entry_texts = self._batch_gen_srt_file_fast(fp, _vp_b, _parts_dir_srt, _on_ep)
+                        else:
+                            tensor, entry_tensors, entry_texts = self._batch_gen_srt_file(fp, kw, _parts_dir_srt, _on_ep)
                         if tensor is None:
                             self._log("  ⚠ SRT rỗng hoặc không parse được", "warn")
                             fail += 1; continue
+                        # Ghep (text, dur) tu entry_tensors/entry_texts (cung
+                        # thu tu, gap giua cac entry da GOM SAN vao audio nen
+                        # dur = do dai tensor + gap_var, gap_ms=0 khi export.
+                        if entry_texts:
+                            _gap_sec_b = int(self.gap_var.get()) / 1000.0
+                            for _bi, (_bt_txt, _bt_ten) in enumerate(zip(entry_texts, entry_tensors)):
+                                _bt_dur = _bt_ten.shape[-1] / 24000
+                                if _bi < len(entry_texts) - 1:
+                                    _bt_dur += _gap_sec_b
+                                _srt_timeline_data.append((_bt_txt, _bt_dur))
                     else:
                         # .txt (hoac extension la - doc nhu text thuong)
                         txt=Path(fp).read_text("utf-8", errors="ignore").strip()
                         if not txt:
                             self._log("  ⚠ File trống", "warn")
                             skipped += 1; continue
-                        a=Backend.gen(preprocess_text(txt),num_step=self.steps_var.get(),
-                                       speed=self._get_speed(),**kw)
-                        tensor = _to_tensor(a)
+                        _vp_txt = _batch_override_vp or (self.lib.profiles[self.sel_idx] if 0 <= self.sel_idx < len(self.lib.profiles) else None)
+                        # Toi uu doc (TTS-friendly): dung chung checkbox voi
+                        # tab SRT - ap tren ban sao, khong sua file goc.
+                        # FIX v3.66: Edge TTS khong tach cau dai (rule B) -
+                        # phai biet mode TRUOC khi goi (doi cho voi _vp_txt).
+                        # FIX v3.66 (audit 2026-07-24): bo qua TTS-friendly
+                        # khi mode=clone - xem ghi chu day du o _do_text().
+                        _is_clone_batch = bool(_vp_txt and _vp_txt.mode == "clone")
+                        if (getattr(self, "srt_tts_friendly_var", None) and self.srt_tts_friendly_var.get()
+                                and not _is_clone_batch):
+                            _is_edge_batch = bool(_vp_txt and _vp_txt.mode == "edge")
+                            txt = _tts_friendly(txt, split_long_sentences=not _is_edge_batch)
+                        if _vp_txt and _vp_txt.mode == "edge":
+                            # Edge TTS cho .txt: tach thanh cac doan ngan, gen tung doan
+                            import asyncio, tempfile, torch as _tch_b, torchaudio as _ta_b, inspect as _ins_b
+                            _ev_b = getattr(_vp_txt, "instruct", "") or ""
+                            _edge_vid_b = _ev_b.replace("edge:","").strip() if _ev_b.startswith("edge:") else "vi-VN-HoaiMyNeural"
+                            self._log(f"  🌐 Edge TTS [{_edge_vid_b}]", "info")
+                            _use_pcm_b = 'codec' in _ins_b.signature(__import__("edge_tts").Communicate.__init__).parameters
+                            async def _edge_txt_gen(_text, _vid, _use_pcm):
+                                import edge_tts as _et, wave as _wv_b
+                                _tw = tempfile.mktemp(suffix=".wav")
+                                _tp = _tw + ".pcm"
+                                _tm = _tw + ".mp3"
+                                if _use_pcm:
+                                    await _et.Communicate(_text, _vid, codec="audio-24khz-16bit-mono-pcm").save(_tp)
+                                    if os.path.exists(_tp) and os.path.getsize(_tp) >= 100:
+                                        with open(_tp,"rb") as _f: _pcm_b=_f.read()
+                                        with _wv_b.open(_tw,"wb") as _wf_b:
+                                            _wf_b.setnchannels(1);_wf_b.setsampwidth(2)
+                                            _wf_b.setframerate(24000);_wf_b.writeframes(_pcm_b)
+                                        try: os.remove(_tp)
+                                        except Exception: pass
+                                        return _tw
+                                else:
+                                    await _et.Communicate(_text, _vid).save(_tm)
+                                    if os.path.exists(_tm) and os.path.getsize(_tm) >= 100:
+                                        import imageio_ffmpeg as _iff_b, subprocess as _spb
+                                        _wt2 = _tm + "_24k.wav"
+                                        _spb.run([_iff_b.get_ffmpeg_exe(),'-i',_tm,'-ar','24000',
+                                                  '-ac','1','-f','wav',_wt2,'-y','-loglevel','quiet'],
+                                                 timeout=30,check=True,creationflags=0x08000000)
+                                        _wv2,_sr2 = _safe_audio_load(_wt2)
+                                        try: os.remove(_wt2); os.remove(_tm)
+                                        except Exception: pass
+                                        if _sr2 != 24000:
+                                            _wv2 = _ta_b.functional.resample(_wv2,_sr2,24000)
+                                        if _wv2.shape[0] > 1: _wv2=_wv2.mean(dim=0,keepdim=True)
+                                        import soundfile as _sfb
+                                        _sfb.write(_tw, np.squeeze(_wv2.numpy()), 24000, subtype='PCM_16')
+                                        return _tw
+                                return None
+                            # Tach text thanh chunks (tranh Edge TTS timeout voi text qua dai)
+                            _chunk_limit = 900
+                            _raw_txt_b = preprocess_text(txt)
+                            _chunks_b = []
+                            _buf_b = ""
+                            for _sent_b in (_raw_txt_b.replace("。","。\n").replace("！","！\n")
+                                             .replace("？","？\n").replace("!","!\n")
+                                             .replace("?","?\n").replace(".",".\n").splitlines()):
+                                _sent_b = _sent_b.strip()
+                                if not _sent_b: continue
+                                if len(_buf_b) + len(_sent_b) + 1 > _chunk_limit and _buf_b:
+                                    _chunks_b.append(_buf_b.strip())
+                                    _buf_b = _sent_b
+                                else:
+                                    _buf_b += (" " if _buf_b else "") + _sent_b
+                            if _buf_b.strip(): _chunks_b.append(_buf_b.strip())
+                            if not _chunks_b: _chunks_b = [_raw_txt_b[:_chunk_limit]]
+                            _SR_b = 24000
+                            _gap_b = int(self.gap_var.get())
+                            _sil_b = _tch_b.zeros(1, int(_gap_b * _SR_b / 1000))
+                            _parts_b = []
+                            for _cbi, _ck_b in enumerate(_chunks_b):
+                                if self.cancel_ev.is_set(): break
+                                try:
+                                    _loop_b = asyncio.new_event_loop()
+                                    _wp_b = _loop_b.run_until_complete(_edge_txt_gen(_ck_b, _edge_vid_b, _use_pcm_b))
+                                    _loop_b.close()
+                                    if _wp_b and os.path.exists(_wp_b):
+                                        _t_b, _sr_b = _safe_audio_load(_wp_b)
+                                        try: os.remove(_wp_b)
+                                        except Exception: pass
+                                        if _sr_b != _SR_b:
+                                            _t_b = _ta_b.functional.resample(_t_b,_sr_b,_SR_b)
+                                        if _t_b.shape[0] > 1: _t_b=_t_b.mean(dim=0,keepdim=True)
+                                        _parts_b.append(_t_b)
+                                        _dur_b = _t_b.shape[-1] / _SR_b
+                                        if len(_chunks_b) > 1 and _cbi < len(_chunks_b) - 1:
+                                            _parts_b.append(_sil_b)
+                                            _dur_b += _gap_b / 1000.0
+                                        _srt_timeline_data.append((_ck_b, _dur_b))
+                                except Exception as _eb: self._log(f"  ⚠ Edge chunk lỗi: {_eb}","warn")
+                            if _parts_b:
+                                tensor = _tch_b.cat(_parts_b, dim=1) if len(_parts_b) > 1 else _parts_b[0]
+                            else:
+                                tensor = None
+                        elif _vp_txt and _vp_txt.mode == "fast":
+                            # FIX v3.68 (tinh nang moi, theo yeu cau anh Bac):
+                            # mode "MG Nhanh" cho Batch .txt - don gian
+                            # hon Edge nhieu (khong can async/PCM/mang), chi
+                            # tach doan + goi _fast_generate() tuan tu.
+                            import torch as _tch_f
+                            _fv_txt = getattr(_vp_txt, "instruct", "") or ""
+                            _fast_vid_txt = _fv_txt.replace("fast:","").strip() if _fv_txt.startswith("fast:") else FAST_VOICES_LIST[0][0]
+                            self._log(f"  ⚡ MG Nhanh [{_fast_vid_txt}]", "info")
+                            _paras_f = [p.strip() for p in preprocess_text(txt).split("\n\n") if p.strip()] or [txt.strip()]
+                            _sil_f = _tch_f.zeros(1, int(self.gap_var.get() * 24000 / 1000))
+                            _parts_f = []
+                            for _pfi, _para_f in enumerate(_paras_f):
+                                if self.cancel_ev.is_set(): break
+                                try:
+                                    _t_f = _fast_generate(_para_f, _fast_vid_txt, speed=self._get_speed())
+                                    _parts_f.append(_t_f)
+                                    _dur_f = _t_f.shape[-1] / 24000
+                                    if _pfi < len(_paras_f) - 1:
+                                        _parts_f.append(_sil_f)
+                                        _dur_f += self.gap_var.get() / 1000.0
+                                    _srt_timeline_data.append((_para_f, _dur_f))
+                                except Exception as _ef:
+                                    self._log(f"  ⚠ MG Nhanh đoạn lỗi: {_ef}", "warn")
+                            tensor = _tch_f.cat(_parts_f, dim=-1) if _parts_f else None
+                        else:
+                            # FIX v3.66 (hieu nang 2026-07-24): dung _gen_cached
+                            # thay Backend.gen() truc tiep - xem ghi chu o _gen_cached.
+                            _txt_pp = preprocess_text(txt)
+                            a=_gen_cached(_txt_pp, self.steps_var.get(),
+                                          self._get_speed(), kw)
+                            tensor = _to_tensor(a)
+                            # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): mode
+                            # MagicVoice cho .txt trong Batch KHONG tach doan
+                            # (gen 1 lan ca file) - chi co the coi ca file la
+                            # 1 "entry" duy nhat cho xuat .srt timeline (uoc
+                            # luong tho hon Edge/Fast, nhung van dung ty le).
+                            if tensor is not None and tensor.abs().max() > 0.0001:
+                                _srt_timeline_data.append((_txt_pp, tensor.shape[-1] / 24000))
 
                     if tensor is None or tensor.abs().max() < 0.0001:
                         self._log("  ⚠ Audio rỗng", "warn")
                         fail += 1; continue
 
-                    out=self._out(name=default_name, ext=fmt)
+                    # _stem_dir đã tạo ở trên
+                    out = os.path.join(_stem_dir, f"{default_name}.{fmt}")
                     self._save(tensor, out)
-                    self._log(f"  ✅ → {Path(out).name}","ok"); ok+=1
+                    self._log(f"  ✅ → {default_name}/", "ok"); ok += 1
+                    _done_files.append(fp)
 
-                    # MOI: luu _parts/ cho file SRT (giong tab SRT don le)
-                    if ext == ".srt" and entry_tensors:
+                    # FIX v3.68 (theo anh Bac yeu cau 2026-07-26): xuat .srt
+                    # timeline khop audio vua tao - dung chung checkbox
+                    # self.srt_timeline_var voi tab SRT, ap dung cho ca .srt
+                    # lan .txt trong Hang Loat. gap_ms=0 vi khoang lang giua
+                    # entry/chunk/doan da GOM SAN vao dur trong _srt_timeline_data.
+                    try:
+                        if getattr(self, "srt_timeline_var", None) and self.srt_timeline_var.get() and _srt_timeline_data:
+                            _srt_out_path = str(Path(out).with_suffix("")) + "_timeline.srt"
+                            _srt_saved_path, _srt_n = _export_srt_timeline(
+                                _srt_timeline_data, 0, _srt_out_path)
+                            self._log(f"  📝 SRT timeline ({_srt_n} dòng): {Path(_srt_saved_path).name}", "ok")
+                    except Exception as _srt_exp_err:
+                        self._log(f"  ⚠ Không xuất được .srt timeline: {_srt_exp_err}", "warn")
+
+                    # Voice lẻ SRT đã lưu từng cái bên trong gen func, log tổng kết
+                    if ext == ".srt" and entry_tensors and _parts_dir_srt:
                         try:
-                            parts_dir = Path(out).parent / (Path(out).stem + "_parts")
-                            parts_dir.mkdir(parents=True, exist_ok=True)
-                            saved_parts = 0
-                            for _pi, _et in enumerate(entry_tensors):
-                                _part_mp3 = str(parts_dir / f"{_pi+1:03d}.mp3")
-                                try:
-                                    _out_t = _et.unsqueeze(0) if _et.dim()==1 else _et
-                                    to_mp3(_out_t, _part_mp3)
-                                    saved_parts += 1
-                                except Exception as _pe:
-                                    self._log(f"    ⚠ Part {_pi+1}: {_pe}", "warn")
-                            self._log(
-                                f"  📁 {saved_parts}/{len(entry_tensors)} file lẻ → {parts_dir.name}/",
-                                "ok")
-                        except Exception as _dir_err:
-                            self._log(f"  ⚠ Không tạo được thư mục parts: {_dir_err}", "warn")
+                            _saved_n = len([_f for _f in os.listdir(_parts_dir_srt) if _f.endswith(".mp3")])
+                            self._log(f"  📁 {_saved_n}/{len(entry_tensors)} file lẻ → voice_le/", "ok")
+                        except Exception:
+                            pass
+
+                    # Cập nhật preview box: tổng kết file-level
+                    def _upd_prev(done=list(_done_files)):
+                        try:
+                            done_set = set(done)
+                            lines = [f"✅ Đã xong: {len(done_set)}/{_total_files} file"]
+                            for _f in self._txt_files:
+                                nm = Path(_f).name
+                                lines.append(f"  {'✅' if _f in done_set else '⬜'} {nm}")
+                            self.batch_preview.config(state="normal")
+                            self.batch_preview.delete("1.0", "end")
+                            self.batch_preview.insert("1.0", "\n".join(lines))
+                            self.batch_preview.config(state="disabled")
+                            self.batch_preview_info.config(text=f"{len(done_set)} / {_total_files} file")
+                        except Exception:
+                            pass
+                    self.after(0, _upd_prev)
+
                 except Exception as e:
                     self._log(f"  ❌ {Path(fp).name}: {e}","err"); fail+=1
                 self.after(0,lambda v=(i+1)/total*100:self.pb.configure(value=v))
@@ -6680,7 +11462,13 @@ class App(tk.Tk):
                         self._out_counter_offset += ok
                 except Exception:
                     pass
+            if ok > 0:
+                try:
+                    self._save_batch_session()
+                except Exception:
+                    pass
             self._running_tab = None
+            self._stop_timer()
             self._busy(False)
 
     def _concat(self, segs, out, gap_ms):
@@ -6831,35 +11619,21 @@ class App(tk.Tk):
         self.after(100, self._check_srt_density)
 
     def _check_srt_density(self):
-        """Phat hien entry qua dai → hoi user co muon split khong."""
+        """Phat hien entry qua dai — chi canh bao trong Log, khong hoi/split nua.
+        FIX v3.65 (21): bo han hop thoai Yes/No + _auto_split_srt() - gay loi
+        "tao xong khong ra voice" khi chon Yes (kich ban dai). Khong can thiet:
+        chi la canh bao mat can doi text/thoi luong, khong anh huong kha nang
+        tao voice thanh cong hay khong.
+        """
         if not self.srt_entries: return
-        # Nguong: 15 ky tu / giay la binh thuong
-        # Entry qua dai neu: len(text) > duration_s * 15
         CHARS_PER_SEC = 15
-        too_long = []
-        for e in self.srt_entries:
-            dur_s = (e.end_ms - e.start_ms) / 1000
-            if dur_s > 0 and len(e.text) > dur_s * CHARS_PER_SEC * 1.3:
-                too_long.append(e)
-
-        if not too_long: 
-            self._refresh_srt_preview()
-            return
-
-        # Hoi user
-        msg = (f"Phát hiện {len(too_long)} entry text quá dài so với thời gian:\n\n")
-        for e in too_long[:3]:
-            dur_s = (e.end_ms - e.start_ms) / 1000
-            msg += f"  Entry {e.index}: {len(e.text)} ký tự / {dur_s:.1f}s\n"
-        if len(too_long) > 3:
-            msg += f"  ... và {len(too_long)-3} entry khác\n"
-        msg += "\nTự động split entry quá dài cho chuẩn không?"
-
-        ans = messagebox.askyesno("⚠ SRT Entry Quá Dài", msg, parent=self)
-        if ans:
-            self._auto_split_srt(too_long)
-        else:
-            self._refresh_srt_preview()
+        too_long = [e for e in self.srt_entries
+                    if (e.end_ms - e.start_ms) / 1000 > 0
+                    and len(e.text) > (e.end_ms - e.start_ms) / 1000 * CHARS_PER_SEC * 1.3]
+        if too_long:
+            self._log(f"⚠ {len(too_long)} entry text khá dài so với thời gian hiển thị "
+                       f"(không ảnh hưởng tạo voice)", "warn")
+        self._refresh_srt_preview()
 
     def _auto_split_srt(self, too_long_entries):
         """Tu dong split cac entry qua dai thanh 2-3 entry nho hon."""
@@ -7190,11 +11964,16 @@ class App(tk.Tk):
         s = ttk.Style(self)
         s.theme_use("clam")   # clam theme cho slider đẹp hơn
 
-        # Progress bar — mỏng, màu xanh
+        # Progress bar — FIX v3.68 (theo anh Bac yeu cau 2026-07-27): sau khi
+        # bo dong chu trang thai (xem statusbar), co nhieu khoang trong hon -
+        # lam thanh chay DAY va DAI hon (thickness 6->10, length 130->240 o
+        # noi tao widget) cho no bat + "sang" hon, troughcolor doi sang mau
+        # nen nhat (hover) thay vi xam border - tuong phan ro voi mau tim
+        # cua thanh chay dang tien do.
         s.configure("TProgressbar",
-                    troughcolor=P["border"],
+                    troughcolor=P["hover"],
                     background=P["purple"],
-                    thickness=6,
+                    thickness=10,
                     borderwidth=0)
 
         # Treeview — sạch, bo nhẹ
@@ -7262,7 +12041,9 @@ class App(tk.Tk):
               foreground=[("selected", P["purple"])],
               font=[("selected", (FN, 9, "bold"))])
 
-if __name__ == "__main__":
+
+# v3.36: Wrap entry point vao function de Nuitka compile sang .pyd
+def _main_entry():
     # ── Cai tu dong firebase-admin va omnivoice TRUOC khi chay ────
     # FIX v3.20: Chi check & cai khi LAN DAU (track qua flag file).
     # Nhung lan sau, neu thieu module thi import se loi -> bao user.
@@ -7271,23 +12052,55 @@ if __name__ == "__main__":
     from pathlib import Path as _Path_pre
 
     _flag_file = _Path_pre(__file__).parent / ".deps_installed"
-    if not _flag_file.exists():
+    _ver_file  = _Path_pre(__file__).parent / "version.txt"
+
+    # Doc version hien tai va version da cai truoc do
+    _cur_ver = ""
+    _ins_ver = ""
+    try:
+        if _ver_file.exists():
+            _cur_ver = _ver_file.read_text("utf-8").strip()
+    except Exception: pass
+    try:
+        if _flag_file.exists():
+            _ins_ver = _flag_file.read_text("utf-8").strip()
+    except Exception: pass
+
+    # Can chay setup neu: lan dau chua co flag HOAC version thay doi
+    _need_setup = not _flag_file.exists() or (_cur_ver and _ins_ver != _cur_ver)
+
+    if _need_setup:
         _flags_pre = 0x08000000 if _os_pre.name == "nt" else 0
+        _setup_py  = _Path_pre(__file__).parent / "setup_helper.py"
         _all_ok = True
-        for _mod_pre, _pkg_pre in [("firebase_admin", "firebase-admin"), ("omnivoice", "omnivoice")]:
+        if _setup_py.exists():
+            # Chay setup_helper.py day du: tu dong upgrade package theo phien ban moi
             try:
-                __import__(_mod_pre)
-            except ImportError:
+                _r_setup = _sp_pre.run(
+                    [_sys_pre.executable, str(_setup_py)],
+                    creationflags=_flags_pre, timeout=1200
+                )
+                if _r_setup.returncode != 0:
+                    _all_ok = False  # setup_helper bao loi -> khong ghi flag -> chay lai lan sau
+            except Exception:
+                _all_ok = False
+        else:
+            # Fallback: chi cai 2 goi chinh neu setup_helper khong co
+            for _mod_pre, _pkg_pre in [("firebase_admin","firebase-admin"),("omnivoice","omnivoice")]:
                 try:
-                    _sp_pre.run(
-                        [_sys_pre.executable, "-m", "pip", "install",
-                         _pkg_pre, "--quiet", "--no-cache-dir"],
-                        creationflags=_flags_pre, timeout=300
-                    )
-                except Exception:
-                    _all_ok = False
+                    __import__(_mod_pre)
+                except ImportError:
+                    try:
+                        _sp_pre.run(
+                            [_sys_pre.executable, "-m", "pip", "install",
+                             _pkg_pre, "--quiet", "--no-cache-dir"],
+                            creationflags=_flags_pre, timeout=300
+                        )
+                    except Exception:
+                        _all_ok = False
+        # Ghi version moi vao flag de lan sau khong chay lai
         if _all_ok:
-            try: _flag_file.write_text("ok")
+            try: _flag_file.write_text(_cur_ver or "ok")
             except Exception: pass
 
     # FIX v3.20: warm-up server o background ngay khi startup
@@ -7302,6 +12115,248 @@ if __name__ == "__main__":
     # ── Dang nhap tai khoan ───────────────────────────────────────
     import tkinter as _tk_login
 
+    _QR_SERVER_BASE = "https://magicvoice-update-1.onrender.com"
+
+    def _open_qr_renewal_window(parent, username_hint=""):
+        """Cua so QR gia han 300k/30 ngay. Dung urllib.request (KHONG dung
+        requests) de goi API - toan bo app da patch SSL context cua
+        urllib.request bang certifi luc import (xem dau file), tranh lap lai
+        loi CERTIFICATE_VERIFY_FAILED tren may khach thieu goc chung chi."""
+        import tkinter as _tk, json as _json, urllib.request as _ureq, threading as _thq, io as _io
+
+        win = _tk.Toplevel(parent)
+        win.title("Gia Hạn Tài Khoản")
+        win.configure(bg="#0f1117")
+        win.resizable(False, False)
+        W, H = 420, 700
+        win.geometry(f"{W}x{H}")
+        win.update_idletasks()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        win.geometry(f"{W}x{H}+{px+(pw-W)//2}+{py+(ph-H)//2}")
+        try:
+            win.transient(parent); win.grab_set()
+            win.attributes("-topmost", True)
+            win.lift()
+            win.focus_force()
+        except Exception: pass
+
+        _tk.Label(win, text="Gia Hạn Tài Khoản", font=("Segoe UI",14,"bold"), bg="#0f1117", fg="#e8eaf6").pack(pady=(20,2))
+        _tk.Label(win, text="300.000đ  —  30 ngày sử dụng", font=("Segoe UI",10), bg="#0f1117", fg="#9094b8").pack()
+
+        body = _tk.Frame(win, bg="#0f1117")
+        body.pack(fill="both", expand=True, padx=24, pady=(14,0))
+
+        uv = _tk.StringVar(value=username_hint)
+        _tk.Label(body, text="Tên tài khoản cần gia hạn", font=("Segoe UI",8,"bold"), bg="#0f1117", fg="#9094b8", anchor="w").pack(fill="x")
+        uf = _tk.Frame(body, bg="#252845", highlightthickness=1, highlightbackground="#2d3154")
+        uf.pack(fill="x", pady=(4,0))
+        ue = _tk.Entry(uf, textvariable=uv, font=("Segoe UI",11), bg="#252845", fg="#e8eaf6", insertbackground="#6c63ff", relief="flat", bd=0)
+        ue.pack(fill="x", ipady=8, padx=8)
+
+        status_var = _tk.StringVar(value="")
+        status_lbl = _tk.Label(body, textvariable=status_var, font=("Segoe UI",9), bg="#0f1117", fg="#9094b8", wraplength=320, justify="center")
+        status_lbl.pack(pady=(10,4))
+
+        qr_lbl = _tk.Label(body, bg="#0f1117")
+        qr_lbl.pack()
+
+        info_var = _tk.StringVar(value="")
+        _tk.Label(body, textvariable=info_var, font=("Segoe UI",9), bg="#0f1117", fg="#6b7280", justify="center").pack(pady=(6,0))
+
+        state = {"order_code": None, "stop": False, "photo": None}
+
+        def _api(path, payload=None, method="GET"):
+            data = _json.dumps(payload).encode("utf-8") if payload is not None else None
+            req = _ureq.Request(_QR_SERVER_BASE + path, data=data,
+                                 headers={"Content-Type": "application/json"}, method=method)
+            with _ureq.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+
+        def _fail(msg):
+            btn_qr.config(state="normal", text="Tạo Mã QR")
+            status_var.set("Lỗi: " + msg); status_lbl.config(fg="#ef4444")
+
+        def _on_paid():
+            state["stop"] = True
+            status_var.set("✅ Đã gia hạn thành công! Vui lòng đăng nhập lại.")
+            status_lbl.config(fg="#00d68f")
+            btn_close.config(text="Đóng - Đăng nhập lại")
+
+        def _poll_loop():
+            while not state["stop"]:
+                time.sleep(3)
+                if state["stop"]: return
+                try:
+                    r = _api(f"/api/order_status?order_code={state['order_code']}")
+                    if r.get("ok") and r.get("status") == "paid":
+                        win.after(0, _on_paid); return
+                except Exception:
+                    pass
+
+        def _show_qr(img_bytes, r):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(_io.BytesIO(img_bytes))
+                img.thumbnail((300, 300), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                state["photo"] = photo
+                qr_lbl.config(image=photo)
+            except Exception:
+                pass
+            status_var.set("Quét mã QR bằng app ngân hàng để chuyển khoản")
+            status_lbl.config(fg="#9094b8")
+            amount_txt = f"{r['amount']:,}".replace(",", ".")
+            info_var.set(f"Nội dung CK: {r['order_code']}\nSố tiền: {amount_txt}đ\n{r['account_name']} - {r['account_no']}")
+            btn_qr.pack_forget()
+            _thq.Thread(target=_poll_loop, daemon=True).start()
+
+        def _create_qr():
+            u = uv.get().strip()
+            if not u:
+                status_var.set("Nhập tên tài khoản!"); status_lbl.config(fg="#ef4444"); return
+            btn_qr.config(state="disabled", text="Đang tạo QR...")
+            status_var.set(""); win.update()
+            def _work():
+                try:
+                    r = _api("/api/create_qr", {"username": u}, method="POST")
+                    if not r.get("ok"):
+                        win.after(0, lambda: _fail(r.get("error", "Lỗi không xác định"))); return
+                    state["order_code"] = r["order_code"]
+                    img_bytes = _ureq.urlopen(r["qr_image_url"], timeout=15).read()
+                    win.after(0, lambda: _show_qr(img_bytes, r))
+                except Exception as ex:
+                    _err_msg = str(ex)[:80]
+                    win.after(0, lambda: _fail(_err_msg))
+            _thq.Thread(target=_work, daemon=True).start()
+
+        btn_qr = _tk.Button(body, text="Tạo Mã QR", command=_create_qr, font=("Segoe UI",11,"bold"),
+                             bg="#6c63ff", fg="white", relief="flat", cursor="hand2", activebackground="#8b85ff")
+        btn_qr.pack(fill="x", ipady=9, pady=(6,0))
+
+        def _close():
+            state["stop"] = True
+            win.destroy()
+        btn_close = _tk.Button(win, text="Đóng", command=_close, font=("Segoe UI",9),
+                                bg="#1a1d2e", fg="#9094b8", relief="flat", cursor="hand2")
+        btn_close.pack(pady=(14,16))
+
+        win.protocol("WM_DELETE_WINDOW", _close)
+        if username_hint: btn_qr.focus_set()
+        else: ue.focus_set()
+
+    def _open_qr_signup_window(parent, on_paid):
+        """Cua so DANG KY TAI KHOAN MOI qua QR - khach khong nhap gi ca,
+        tu dong tao QR ngay khi mo. Khi thanh toan xong, goi on_paid(u,p)
+        de man hinh dang nhap tu dien username/password, khach chi bam
+        Dang Nhap. Cung quy uoc urllib.request nhu _open_qr_renewal_window
+        (khong dung requests, dua vao SSL context certifi da patch dau file)."""
+        import tkinter as _tk, json as _json, urllib.request as _ureq, threading as _thq, io as _io
+
+        win = _tk.Toplevel(parent)
+        win.title("Đăng Ký Tài Khoản Mới")
+        win.configure(bg="#0f1117")
+        win.resizable(False, False)
+        W, H = 420, 700
+        win.geometry(f"{W}x{H}")
+        win.update_idletasks()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        win.geometry(f"{W}x{H}+{px+(pw-W)//2}+{py+(ph-H)//2}")
+        try:
+            win.transient(parent); win.grab_set()
+            win.attributes("-topmost", True)
+            win.lift()
+            win.focus_force()
+        except Exception: pass
+
+        _tk.Label(win, text="Đăng Ký Tài Khoản Mới", font=("Segoe UI",14,"bold"), bg="#0f1117", fg="#e8eaf6").pack(pady=(20,2))
+        _tk.Label(win, text="300.000đ  —  30 ngày sử dụng", font=("Segoe UI",10), bg="#0f1117", fg="#9094b8").pack()
+
+        body = _tk.Frame(win, bg="#0f1117")
+        body.pack(fill="both", expand=True, padx=24, pady=(14,0))
+
+        status_var = _tk.StringVar(value="Đang tạo mã QR...")
+        status_lbl = _tk.Label(body, textvariable=status_var, font=("Segoe UI",9), bg="#0f1117", fg="#9094b8", wraplength=320, justify="center")
+        status_lbl.pack(pady=(10,4))
+
+        qr_lbl = _tk.Label(body, bg="#0f1117")
+        qr_lbl.pack()
+
+        info_var = _tk.StringVar(value="")
+        _tk.Label(body, textvariable=info_var, font=("Segoe UI",9), bg="#0f1117", fg="#6b7280", justify="center").pack(pady=(6,0))
+
+        state = {"order_code": None, "stop": False, "photo": None}
+
+        def _api(path, payload=None, method="GET"):
+            data = _json.dumps(payload).encode("utf-8") if payload is not None else None
+            req = _ureq.Request(_QR_SERVER_BASE + path, data=data,
+                                 headers={"Content-Type": "application/json"}, method=method)
+            with _ureq.urlopen(req, timeout=15) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+
+        def _fail(msg):
+            status_var.set("Lỗi: " + msg); status_lbl.config(fg="#ef4444")
+
+        def _on_paid(username, password):
+            state["stop"] = True
+            status_var.set("✅ Đã tạo tài khoản thành công!")
+            status_lbl.config(fg="#00d68f")
+            info_var.set("")
+            btn_close.config(text="Đóng - Đăng Nhập Ngay")
+            win.after(600, lambda: (on_paid(username, password), _close()))
+
+        def _poll_loop():
+            while not state["stop"]:
+                time.sleep(3)
+                if state["stop"]: return
+                try:
+                    r = _api(f"/api/order_status?order_code={state['order_code']}")
+                    if r.get("ok") and r.get("status") == "paid":
+                        win.after(0, lambda: _on_paid(r.get("username"), r.get("password"))); return
+                except Exception:
+                    pass
+
+        def _show_qr(img_bytes, r):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(_io.BytesIO(img_bytes))
+                img.thumbnail((300, 300), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                state["photo"] = photo
+                qr_lbl.config(image=photo)
+            except Exception:
+                pass
+            status_var.set("Quét mã QR bằng app ngân hàng để chuyển khoản")
+            status_lbl.config(fg="#9094b8")
+            amount_txt = f"{r['amount']:,}".replace(",", ".")
+            info_var.set(f"Nội dung CK: {r['order_code']}\nSố tiền: {amount_txt}đ\n{r['account_name']} - {r['account_no']}\n\nTài khoản sẽ tự động được tạo\nngay sau khi chuyển khoản thành công.")
+            _thq.Thread(target=_poll_loop, daemon=True).start()
+
+        def _create_qr():
+            def _work():
+                try:
+                    r = _api("/api/signup_qr", {}, method="POST")
+                    if not r.get("ok"):
+                        win.after(0, lambda: _fail(r.get("error", "Lỗi không xác định"))); return
+                    state["order_code"] = r["order_code"]
+                    img_bytes = _ureq.urlopen(r["qr_image_url"], timeout=15).read()
+                    win.after(0, lambda: _show_qr(img_bytes, r))
+                except Exception as ex:
+                    _err_msg = str(ex)[:80]
+                    win.after(0, lambda: _fail(_err_msg))
+            _thq.Thread(target=_work, daemon=True).start()
+
+        def _close():
+            state["stop"] = True
+            win.destroy()
+        btn_close = _tk.Button(win, text="Đóng", command=_close, font=("Segoe UI",9),
+                                bg="#1a1d2e", fg="#9094b8", relief="flat", cursor="hand2")
+        btn_close.pack(pady=(14,16))
+
+        win.protocol("WM_DELETE_WINDOW", _close)
+        _create_qr()
+
     def _show_login():
         import json as _json, tkinter as _tk
         from pathlib import Path as _P
@@ -7313,7 +12368,11 @@ if __name__ == "__main__":
                     d = _json.loads(_cache.read_text("utf-8"))
                     return d.get("username",""), d.get("password",""), d.get("remember",False)
             except: pass
-            return "","",False
+            # FIX (theo anh Bac 2026-08-14): mac dinh TICK SAN khi chua co
+            # cache (khach moi/lan dau tren may nay) - tranh truong hop khach
+            # tao tai khoan qua QR (username/password tu sinh, kho nho) roi
+            # lo bo tick, lan sau khong dang nhap lai duoc phai lien he ho tro.
+            return "","",True
         def _save(u,p): 
             try: _cache.write_text(_json.dumps({"username":u,"password":p,"remember":True}),"utf-8")
             except: pass
@@ -7323,17 +12382,17 @@ if __name__ == "__main__":
             except: pass
 
         su, sp, sr = _load()
-        ok = [False, ""]
+        ok = [False, "", ""]
 
         win = _tk.Tk()
         win.title("MagicVoice TTS Studio")
-        win.geometry("440x580")
+        win.geometry("440x668")
         win.configure(bg="#0f1117")
         win.resizable(False,False)
         win.update_idletasks()
         x = (win.winfo_screenwidth()-440)//2
-        y = (win.winfo_screenheight()-580)//2
-        win.geometry(f"440x580+{x}+{y}")
+        y = (win.winfo_screenheight()-668)//2
+        win.geometry(f"440x668+{x}+{y}")
         try:
             ico = _P(__file__).parent / "MagicVoice.ico"
             if ico.exists():
@@ -7342,7 +12401,7 @@ if __name__ == "__main__":
                 win.after(0, lambda: win.iconbitmap(default=ico_str))
         except: pass
 
-        c = _tk.Canvas(win,width=440,height=580,bg="#0f1117",highlightthickness=0)
+        c = _tk.Canvas(win,width=440,height=668,bg="#0f1117",highlightthickness=0)
         c.pack(fill="both",expand=True)
         c.create_oval(-60,-60,200,200,fill="#1a1040",outline="")
         c.create_oval(280,-40,520,200,fill="#0d1535",outline="")
@@ -7414,18 +12473,23 @@ if __name__ == "__main__":
                 if r:
                     ok[0] = True
                     ok[1] = m
+                    ok[2] = u
                     if rv.get(): _save(u,p)
                     else: _clear()
                     btn.config(text="Thành công!", bg="#00d68f")
                     mv.set(m); ml.config(fg="#00d68f")
                     win.after(700, win.quit)
                 else:
-                    # Neu online that bai thi thu offline
-                    if not is_offline:
+                    # Chi fallback offline khi loi MANG, khong fallback khi server tu choi (sai pass)
+                    _is_net_err = ("kết nối" in m.lower() or "ket noi" in m.lower()
+                                   or "timeout" in m.lower() or "connection" in m.lower()
+                                   or "server" in m.lower())
+                    if not is_offline and _is_net_err:
                         r2, m2 = verify_login_offline(u, p)
                         if r2:
                             ok[0] = True
                             ok[1] = m2
+                            ok[2] = u
                             if rv.get(): _save(u,p)
                             else: _clear()
                             btn.config(text="Thành công!", bg="#00d68f")
@@ -7448,7 +12512,21 @@ if __name__ == "__main__":
         bz = _tk.Button(c,text="📲  Tham Gia Nhóm Zalo",command=zalo,font=("Segoe UI",9,"bold"),bg="#0068ff",fg="white",relief="flat",cursor="hand2")
         c.create_window(220,510,window=bz,width=240,height=32)
 
-        c.create_text(220,548,text="🎁 Dùng thử? Liên hệ Zalo để được hỗ trợ",font=("Segoe UI",8),fill="#6b7280")
+        def open_signup():
+            def _on_signup_paid(new_u, new_p):
+                uv.set(new_u); pv.set(new_p)
+                mv.set(f"Đã tạo tài khoản {new_u}! Bấm Đăng Nhập để vào.")
+                ml.config(fg="#00d68f")
+            _open_qr_signup_window(win, _on_signup_paid)
+        bs = _tk.Button(c,text="🆕  Chưa Có Tài Khoản? Đăng Ký Ngay — 300k/30 ngày",command=open_signup,font=("Segoe UI",9,"bold"),bg="#6c63ff",fg="white",relief="flat",cursor="hand2",activebackground="#8b85ff")
+        c.create_window(220,552,window=bs,width=340,height=32)
+
+        def open_qr():
+            _open_qr_renewal_window(win, uv.get().strip())
+        bq = _tk.Button(c,text="💳  Gia Hạn Tài Khoản — 300k/30 ngày",command=open_qr,font=("Segoe UI",9,"bold"),bg="#f59e0b",fg="white",relief="flat",cursor="hand2",activebackground="#fbbf24")
+        c.create_window(220,592,window=bq,width=280,height=32)
+
+        c.create_text(220,636,text="🎁 Dùng thử? Liên hệ Zalo để được hỗ trợ",font=("Segoe UI",8),fill="#6b7280")
 
         win.protocol("WM_DELETE_WINDOW",win.destroy)
         win.bind("<Return>",login)
@@ -7458,7 +12536,7 @@ if __name__ == "__main__":
         win.mainloop()
         try: win.destroy()
         except: pass
-        return ok[0], ok[1]
+        return ok[0], ok[1], ok[2]
 
     import os as _os, sys as _sys
 
@@ -7476,20 +12554,66 @@ if __name__ == "__main__":
                 is_running = False
                 try:
                     import psutil as _ps
-                    proc = _ps.Process(pid)
-                    # Kiem tra ten process co phai Python/MagicVoice khong
-                    if proc.is_running() and proc.status() != _ps.STATUS_ZOMBIE:
-                        name = proc.name().lower()
-                        if "python" in name or "magicvoice" in name:
-                            is_running = True
-                except Exception:
-                    # psutil loi hoac process khong ton tai → xoa lock cu
+                    # FIX v3.66: truoc day chi kiem tra TEN process co chua
+                    # "python"/"magicvoice" - qua rong, de bi NHAN NHAM voi
+                    # BAT KY tien trinh python nao khac tren may (setup_helper.py,
+                    # 1 script python khac cua khach...) neu PID cu bi Windows
+                    # TAI SU DUNG cho tien trinh moi sau khi MagicVoice thuc su
+                    # da tat - gay bao "dang chay" GIA, app tu thoat voi ma
+                    # THANH CONG (khong phai loi) - khach thay "khong len app,
+                    # khong bao loi gi ca" du thuc te khong co gi dang chay
+                    # that. Gio kiem tra CHINH XAC hon: dung command line phai
+                    # chua ten file "magicvoice.py" that su, khong chi ten
+                    # process chung chung. (Da xac nhan: magicvoice.py la
+                    # entry point CHAY THANG qua pythonw.exe - chi
+                    # magicvoice_gui.py duoc compile thanh .pyd, ban than
+                    # magicvoice.py van la script .py binh thuong - nen
+                    # cmdline cua tien trinh that su LUON chua "magicvoice.py".)
+                    try:
+                        proc = _ps.Process(pid)
+                        if proc.is_running() and proc.status() != _ps.STATUS_ZOMBIE:
+                            try:
+                                cmdline = " ".join(proc.cmdline()).lower()
+                            except Exception:
+                                cmdline = ""
+                            if "magicvoice.py" in cmdline or "magicvoice_core" in cmdline:
+                                is_running = True
+                    except _ps.NoSuchProcess:
+                        # FIX v3.66 (audit 2026-07-24): PID nay THAT SU khong
+                        # con ton tai - an toan xoa lock cu, dung nhu truoc day.
+                        try: _os.remove(_lock_file)
+                        except: pass
+                    except _ps.AccessDenied:
+                        # FIX v3.66 (audit 2026-07-24): day la truong hop DUY
+                        # NHAT ma truoc day fail-open SAI - AccessDenied nghia
+                        # la PID VAN TON TAI THAT (Windows tu choi cho doc
+                        # cmdline do khac quyen/session), khac han NoSuchProcess.
+                        # Truoc day rơi chung vao 1 khoi "except Exception" nen
+                        # bi xoa lock giong het truong hop "da mat" - cho phep
+                        # mo instance thu 2 ngay ca khi instance dau VAN DANG
+                        # CHAY that. Day la LOI DUY NHAT can sua chac chan, vi
+                        # AccessDenied la bang chung RO RANG process con song -
+                        # gio gia dinh AN TOAN "van dang chay" (khong xoa lock,
+                        # khong ghi de PID) thay vi coi nhu da mat.
+                        is_running = True
+                except ImportError:
+                    # Khong co psutil (goi optional, co the chua cai) → khong
+                    # the kiem tra PID chinh xac. GIU NGUYEN hanh vi cu (fail-
+                    # open, coi nhu khong chay) - day la truong hop da tung
+                    # gay bao "dang chay" GIA duoc ghi lai o comment tren, KHONG
+                    # doi sang fail-safe o day de tranh regress dung bug do.
                     try: _os.remove(_lock_file)
                     except: pass
 
                 if is_running:
                     import tkinter as _tk2
                     _r = _tk2.Tk(); _r.withdraw()
+                    # FIX v3.66: bat topmost de cua so canh bao LUON hien len
+                    # tren cung - truoc day co the bi Windows chan dua ra
+                    # foreground (dac biet khi app duoc mo qua tien trinh
+                    # nen/an nhu MagicVoice.vbs), khien canh bao ton tai
+                    # nhung khach khong thay gi ca, tuong app "khong len".
+                    _r.attributes("-topmost", True)
                     _tk2.messagebox.showwarning(
                         "Canh bao",
                         "MagicVoice TTS Studio dang chay!\nChi duoc mo 1 cua so lam viec.")
@@ -7519,28 +12643,17 @@ if __name__ == "__main__":
 
     # ── Kiem tra firebase & dang nhap ─────────────────────────────
     # Dang nhap qua API Server (khong can firebase_credentials.json)
-    logged_in, login_msg = _show_login()
+    logged_in, login_msg, _last_username = _show_login()
     if not logged_in:
         _sys.exit(0)
-    # Lay username tu login_msg hoac cache
-    try:
-        import json as _jj, base64 as _b64
-        from pathlib import Path as _Path  # FIX v3.22.4: import _Path local de tranh NameError
-        _cache = _Path(__file__).parent / ".login_cache"
-        # FIX v3.22.2: cache duoc luu voi key "username" (line 7219), KHONG phai "u"
-        # Truoc day doc sai key -> _last_username luon rong -> heartbeat khong chay
-        # Try cả "username" (cache moi) va "u" (legacy) de backward-compatible
-        try:
-            _raw = _cache.read_text(encoding="utf-8")
-            try:
-                _d = _jj.loads(_raw)  # Format moi: plain JSON
-            except Exception:
-                _d = _jj.loads(_b64.b64decode(_raw).decode())  # Format cu: base64
-        except Exception:
-            _d = {}
-        _last_username = _d.get("username") or _d.get("u") or ""
-    except Exception:
-        _last_username = ""
+    # FIX (bao mat 2026-08-14, theo bao cao khach bypass tu anh Bac): TRUOC DAY
+    # username duoc doc lai tu file .login_cache - file nay CHI duoc ghi neu
+    # khach tick "Ghi nho tai khoan". Khach KHONG tick -> cache rong ->
+    # _last_username = "" -> _verify_license_or_abort() (fail-open cu: "if not
+    # _u: return True") BO QUA HOAN TOAN kiem tra license CA PHIEN - dung tool
+    # free vinh vien sau 1 lan dang nhap, khong lien quan checkbox. Gio lay
+    # thang username tu ket qua dang nhap THANH CONG (_show_login tra ve),
+    # khong con phu thuoc file cache/checkbox nay nua.
 
     # ── MOI: Kiem tra license NGAY sau login (fail-closed) ─────────
     # Neu license khong hop le -> khong cho mo app
@@ -7589,3 +12702,7 @@ if __name__ == "__main__":
         _er = _ek.Tk(); _er.withdraw()
         _ek.messagebox.showerror("Loi Khoi Dong", f"Loi:\n{_e}\n\nXem: {_log_file}")
         _er.destroy()
+
+
+if __name__ == "__main__":
+    _main_entry()
