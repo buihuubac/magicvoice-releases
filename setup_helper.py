@@ -745,7 +745,10 @@ PACKAGES = [
     ("omnivoice",      "omnivoice",       ["--no-cache-dir"],       True,  True,  "MagicVoice Engine"),  # upgrade khi co phien ban moi
     ("huggingface_hub","huggingface_hub", ["--upgrade"],            True,  True),   # can chinh xac de tai model
     ("firebase_admin", "firebase-admin",  [],                       True,  False),
-    ("edge_tts",       "edge-tts",        [],                       True,  True),   # API thay doi giua cac phien ban
+    # FIX v3.73 (2026-10-14): Microsoft doi token xac thuc Edge TTS sang
+    # "Sec-MS-GEC v2" ngay 13/10/2026 -> edge-tts <= 7.2.8 bi 403 tren MOI may.
+    # edge-tts 7.3.0+ da va. Ghi ro muc toi thieu de pip khong the giu ban cu.
+    ("edge_tts",       "edge-tts>=7.3.1", [],                       True,  True,  "edge-tts"),   # API thay doi giua cac phien ban
     # FIX v3.68 (tinh nang moi 2026-07-25, theo yeu cau anh Bac): thu vien
     # cho mode "MG Nhanh" (ten ky thuat: kokoro - KHONG hien ra UI/
     # log gui khach, xem NOTES_kokoro_feature.md). required=False - day la
